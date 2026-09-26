@@ -12,7 +12,7 @@
 #include <stdint.h>
 
 #define B2_DEFAULT_CATEGORY_BITS 1
-#define B2_DEFAULT_MASK_BITS UINT64_MAX
+#define B2_DEFAULT_MASK_BITS UINT16_MAX
 
 /// Task interface
 /// This is the prototype for a Box2D task. Your task system is expected to run this callback on a worker thread,
@@ -55,11 +55,11 @@ typedef struct b2RayResult
 	/// The fraction of the input ray.
 	float fraction;
 
-	/// The number of BVH nodes visited. Diagnostic.
-	int nodeVisits;
+	/// The number of BVH nodes visited. Diagnostic. Saturates at UINT16_MAX.
+	uint16_t nodeVisits;
 
-	/// The number of BVH leaves visited. Diagnostic.
-	int leafVisits;
+	/// The number of BVH leaves visited. Diagnostic. Saturates at UINT16_MAX.
+	uint16_t leafVisits;
 
 	/// Did the ray hit? If false, all other data is invalid.
 	bool hit;
@@ -304,7 +304,8 @@ B2_API b2BodyDef b2DefaultBodyDef( void );
 /// @ingroup shape
 typedef struct b2Filter
 {
-	/// The collision category bits. Normally you would just set one bit. The category bits should
+	/// The collision category bits. Normally you would just set one bit.
+	/// Box2D-Packed: 16 categories. The category bits should
 	/// represent your application object types. For example:
 	/// @code{.cpp}
 	/// enum MyCategories
@@ -316,7 +317,7 @@ typedef struct b2Filter
 	///    // etc
 	/// };
 	/// @endcode
-	uint64_t categoryBits;
+	uint16_t categoryBits;
 
 	/// The collision mask bits. This states the categories that this
 	/// shape would accept for collision.
@@ -325,7 +326,7 @@ typedef struct b2Filter
 	/// @code{.c}
 	/// maskBits = Static | Player;
 	/// @endcode
-	uint64_t maskBits;
+	uint16_t maskBits;
 
 	/// Collision groups allow a certain group of objects to never collide (negative)
 	/// or always collide (positive). A group index of zero has no effect. Non-zero group filtering
@@ -333,7 +334,7 @@ typedef struct b2Filter
 	/// For example, you may want ragdolls to collide with other ragdolls but you don't want
 	/// ragdoll self-collision. In this case you would give each ragdoll a unique negative group index
 	/// and apply that group index to all shapes on the ragdoll.
-	int groupIndex;
+	int16_t groupIndex;
 } b2Filter;
 
 /// Use this to initialize your filter
@@ -347,11 +348,11 @@ B2_API b2Filter b2DefaultFilter( void );
 typedef struct b2QueryFilter
 {
 	/// The collision category bits of this query. Normally you would just set one bit.
-	uint64_t categoryBits;
+	uint16_t categoryBits;
 
 	/// The collision mask bits. This states the shape categories that this
 	/// query would accept for collision.
-	uint64_t maskBits;
+	uint16_t maskBits;
 } b2QueryFilter;
 
 /// Use this to initialize your query filter
@@ -997,7 +998,7 @@ B2_API b2WheelJointDef b2DefaultWheelJointDef( void );
 typedef struct b2ExplosionDef
 {
 	/// Mask bits to filter shapes
-	uint64_t maskBits;
+	uint16_t maskBits;
 
 	/// The center of the explosion in world space
 	b2Pos position;
