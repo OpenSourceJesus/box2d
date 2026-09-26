@@ -60,7 +60,7 @@ static b2Contact* b2GetContactFullId( b2World* world, b2ContactId contactId )
 
 b2ContactData b2Contact_GetData( b2ContactId contactId )
 {
-	b2World* world = b2GetWorld( contactId.world0 );
+	b2World* world = b2GetWorld();
 	b2Contact* contact = b2GetContactFullId( world, contactId );
 	b2ContactSim* contactSim = b2GetContactSim( world, contact );
 	const b2Shape* shapeA = b2Array_Get( world->shapes, contact->shapeIdA );
@@ -71,13 +71,11 @@ b2ContactData b2Contact_GetData( b2ContactId contactId )
 		.shapeIdA =
 			{
 				.index1 = shapeA->id + 1,
-				.world0 = (uint16_t)contactId.world0,
 				.generation = shapeA->generation,
 			},
 		.shapeIdB =
 			{
 				.index1 = shapeB->id + 1,
-				.world0 = (uint16_t)contactId.world0,
 				.generation = shapeB->generation,
 			},
 		.manifold = contactSim->manifold,
@@ -412,16 +410,13 @@ void b2DestroyContact( b2World* world, b2Contact* contact )
 	// End touch event
 	if ( touching && ( flags & b2_contactEnableContactEvents ) != 0 )
 	{
-		uint16_t worldId = world->worldId;
 		const b2Shape* shapeA = b2Array_Get( world->shapes, contact->shapeIdA );
 		const b2Shape* shapeB = b2Array_Get( world->shapes, contact->shapeIdB );
-		b2ShapeId shapeIdA = { shapeA->id + 1, worldId, shapeA->generation };
-		b2ShapeId shapeIdB = { shapeB->id + 1, worldId, shapeB->generation };
+		b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+		b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 
 		b2ContactId contactId = {
 			.index1 = contact->contactId + 1,
-			.world0 = world->worldId,
-			.padding = 0,
 			.generation = contact->generation,
 		};
 
@@ -608,8 +603,8 @@ bool b2UpdateContact( b2World* world, b2ContactSim* contactSim, b2Shape* shapeA,
 
 	if ( touching && world->preSolveFcn != NULL && ( contactSim->simFlags & b2_simEnablePreSolveEvents ) != 0 )
 	{
-		b2ShapeId shapeIdA = { shapeA->id + 1, world->worldId, shapeA->generation };
-		b2ShapeId shapeIdB = { shapeB->id + 1, world->worldId, shapeB->generation };
+		b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+		b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 
 		// This call assumes thread safety.
 		world->preSolveFcn( shapeIdA, shapeIdB, &contactSim->manifold, world->preSolveContext );
