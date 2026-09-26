@@ -159,6 +159,9 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 - **`b2Shape` hot cache line.** Every field the broad-phase pair filter reads (`bodyId`, `sensorIndex`, `type`, `filter`, `generation`, and the flags) is in the first 64 bytes. It used to touch three cache lines per shape, and now touches one. `aabb` starts cache line 1.
 - **No power-of-two stride.** `b2Shape` is 264 bytes, not 256. We measured a 256-byte version: the same field of every shape mapped to a quarter of the cache sets, and `large_pyramid` last-level data misses rose 27%. At 264 bytes each shape shifts by 8 bytes, and fields spread across all sets.
 
+- **Narrow phase reads no shapes for awake contacts.** `b2CollideTask` read `shape->bodyId` for both shapes of every contact, two random cache lines, although the id is only needed in a rare fallback for sleeping bodies. It now reads the shape only in that fallback.
+- **`b2BodySim` collide-hot fields first.** `transform`, `center`, `invMass`, `invInertia`, `maxExtent`, and `flags` are now in the first 40 bytes instead of spread over all 96, so the collide task usually touches one cache line per body instead of two.
+
 ### Cachegrind: cache misses vs Box2D v3
 
 Cachegrind simulates the cache, so these counts are exact and repeat identically run to run. Timing on shared hardware could not resolve differences this small.
@@ -177,6 +180,20 @@ Setup:
 | large_pyramid | +0.3% | -0.3% | **-6.6%** |
 
 Negative is better. The biggest wins are in query-heavy scenes: filtered-out leaves no longer read the proxy array, and query callbacks read one shape cache line instead of three. `tree_cast` does not touch shapes, so its change comes from the tree node layout alone. The instruction count is essentially unchanged, so the savings are memory traffic, which matters more on real hardware with larger worlds and more threads.
+
+### Cachegrind: narrow phase changes
+
+Compared with the previous Box2D-Packed step, with the same Cachegrind setup:
+
+| Benchmark | Instructions | L1 data misses | Last-level data misses |
+| :---- | ----: | ----: | ----: |
+| smash | -0.0% | -2.5% | +0.4% |
+| large_pyramid | -0.1% | -3.3% | +6.1% |
+| many_pyramids | -0.1% | -3.4% | -1.1% |
+| tile_world | -0.0% | -1.0% | -0.0% |
+| joint_grid | +0.0% | -0.0% | +0.0% |
+
+The `large_pyramid` last-level increase is a side effect, not new traffic. The collide task's shape reads used to keep each shape's first line warm for `b2ComputeFatShapeAABB` later in the step. That scene's working set sits right at the 8 MB simulated cache size. In `many_pyramids`, the largest world, last-level misses drop by 3.7M, more than `large_pyramid` gains. `joint_grid` has no contacts and is unaffected.
 
 ### Investigated and not changed
 
