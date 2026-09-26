@@ -14,8 +14,14 @@ typedef struct b2World b2World;
 
 // Box2D-Packed: fields are ordered so everything the broad-phase pair filter reads
 // (bodyId, sensorIndex, type, filter, custom filtering flag, generation) sits in the first
-// 64-byte cache line. The flags are bit-fields, which brings the struct to exactly 256 bytes,
-// four cache lines, in the 64-byte aligned shape array.
+// 64-byte cache line, and aabb starts cache line 1.
+//
+// The size is deliberately 264 bytes, not 256. With a power-of-two stride, the same field of
+// every shape maps to one quarter of the cache sets, and loops that sweep all shapes (such as
+// b2FinalizeBodies computing fat AABBs) thrash those sets. Cachegrind showed a 256-byte layout
+// raised large_pyramid last-level data misses by 27%. At 264 bytes each shape shifts by 8 bytes
+// and fields spread across all sets. The flags stay plain bools: packing them into bit-fields
+// is what shrank the struct to 256.
 typedef struct b2Shape
 {
 	// Cache line 0: pair filtering and identity
@@ -25,11 +31,11 @@ typedef struct b2Shape
 	b2ShapeType type;
 	b2Filter filter;
 	uint16_t generation;
-	bool enableSensorEvents : 1;
-	bool enableContactEvents : 1;
-	bool enableCustomFiltering : 1;
-	bool enableHitEvents : 1;
-	bool enablePreSolveEvents : 1;
+	bool enableSensorEvents;
+	bool enableContactEvents;
+	bool enableCustomFiltering;
+	bool enableHitEvents;
+	bool enablePreSolveEvents;
 	int prevShapeId;
 	int nextShapeId;
 	int proxyKey;
@@ -37,12 +43,12 @@ typedef struct b2Shape
 	float aabbMargin;
 	void* userData;
 
-	// Cache line 1: bounds and material
+	// Cache line 1: bounds and material. aabb starts at offset 64.
 	b2AABB aabb;
 	b2Vec2 localCentroid;
 	b2SurfaceMaterial material;
 
-	// Cache lines 1-3: geometry
+	// Cache lines 1-4: geometry
 	union
 	{
 		b2Capsule capsule;
@@ -53,7 +59,8 @@ typedef struct b2Shape
 	};
 } b2Shape;
 
-_Static_assert( sizeof( b2Shape ) == 256, "b2Shape should be four cache lines" );
+_Static_assert( sizeof( b2Shape ) == 264, "b2Shape size, must not be a power of two, see above" );
+_Static_assert( offsetof( b2Shape, aabb ) == 64, "aabb should start cache line 1" );
 _Static_assert( offsetof( b2Shape, userData ) + sizeof( void* ) <= 64, "pair filter fields must fit in cache line 0" );
 
 typedef struct b2ChainShape
