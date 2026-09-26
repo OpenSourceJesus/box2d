@@ -230,8 +230,8 @@ static void b2FlushCandidatePairs( b2PairContext* context )
 			b2CustomFilterFcn* customFilterFcn = world->customFilterFcn;
 			if ( customFilterFcn != NULL )
 			{
-				b2ShapeId idA = { shapeIdA + 1, world->worldId, shapeA->generation };
-				b2ShapeId idB = { shapeIdB + 1, world->worldId, shapeB->generation };
+				b2ShapeId idA = { (uint16_t)( shapeIdA + 1 ), shapeA->generation };
+				b2ShapeId idB = { (uint16_t)( shapeIdB + 1 ), shapeB->generation };
 				bool shouldCollide = customFilterFcn( idA, idB, world->customFilterContext );
 				if ( shouldCollide == false )
 				{
