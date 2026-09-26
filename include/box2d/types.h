@@ -91,6 +91,24 @@ typedef struct b2Capacity
 /// @ingroup world
 typedef struct b2WorldDef
 {
+	/// Optional mixing callback for friction. The default uses sqrt(frictionA * frictionB).
+	b2FrictionCallback* frictionCallback;
+
+	/// Optional mixing callback for restitution. The default uses max(restitutionA, restitutionB).
+	b2RestitutionCallback* restitutionCallback;
+
+	/// Function to spawn tasks
+	b2EnqueueTaskCallback* enqueueTask;
+
+	/// Function to finish a task
+	b2FinishTaskCallback* finishTask;
+
+	/// User context that is provided to enqueueTask and finishTask
+	void* userTaskContext;
+
+	/// User data
+	void* userData;
+
 	/// Gravity vector. Box2D has no up-vector defined.
 	b2Vec2 gravity;
 
@@ -101,9 +119,6 @@ typedef struct b2WorldDef
 	/// Number of iterations of the restitution solver. More iterations can lead to less box spinning.
 	/// @see B2_MAX_RESTITUTION_ITERATIONS
 	int restitutionIterations;
-
-	/// Enable full contact propagation in the restitution solver. Expensive.
-	bool enableRestitutionPropagation;
 
 	/// Threshold speed for hit events. Usually meters per second.
 	float hitEventThreshold;
@@ -123,18 +138,6 @@ typedef struct b2WorldDef
 	/// Maximum linear speed. Usually meters per second.
 	float maximumLinearSpeed;
 
-	/// Optional mixing callback for friction. The default uses sqrt(frictionA * frictionB).
-	b2FrictionCallback* frictionCallback;
-
-	/// Optional mixing callback for restitution. The default uses max(restitutionA, restitutionB).
-	b2RestitutionCallback* restitutionCallback;
-
-	/// Can bodies go to sleep to improve performance
-	bool enableSleep;
-
-	/// Enable continuous collision
-	bool enableContinuous;
-
 	/// Number of workers for multithreading. Box2D performs best when using performance cores and
 	/// accessing a single L3 cache (uniform memory). Efficiency cores and SMT provide
 	/// little benefit and may even harm performance.
@@ -144,23 +147,20 @@ typedef struct b2WorldDef
 	/// an internal scheduler.
 	int workerCount;
 
-	/// Function to spawn tasks
-	b2EnqueueTaskCallback* enqueueTask;
-
-	/// Function to finish a task
-	b2FinishTaskCallback* finishTask;
-
-	/// User context that is provided to enqueueTask and finishTask
-	void* userTaskContext;
-
-	/// User data
-	void* userData;
-
 	/// Optional initial capacities
 	b2Capacity capacity;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
+
+	/// Enable full contact propagation in the restitution solver. Expensive.
+	bool enableRestitutionPropagation : 1;
+
+	/// Can bodies go to sleep to improve performance
+	bool enableSleep : 1;
+
+	/// Enable continuous collision
+	bool enableContinuous : 1;
 } b2WorldDef;
 
 /// Use this to initialize your world definition
@@ -189,13 +189,13 @@ typedef enum b2BodyType
 typedef struct b2MotionLocks
 {
 	/// Prevent translation along the x-axis
-	bool linearX;
+	bool linearX : 1;
 
 	/// Prevent translation along the y-axis
-	bool linearY;
+	bool linearY : 1;
 
 	/// Prevent rotation around the z-axis
-	bool angularZ;
+	bool angularZ : 1;
 } b2MotionLocks;
 
 /// A body definition holds all the data needed to construct a rigid body.
@@ -205,13 +205,19 @@ typedef struct b2MotionLocks
 /// @ingroup body
 typedef struct b2BodyDef
 {
-	/// The body type: static, kinematic, or dynamic.
-	b2BodyType type;
-
 	/// The initial world position of the body. Bodies should be created with the desired position.
 	/// @note Creating bodies at the origin and then moving them nearly doubles the cost of body creation, especially
 	/// if the body is moved after shapes have been added.
 	b2Pos position;
+
+	/// Optional body name for debugging. Up to B2_NAME_LENGTH characters
+	const char* name;
+
+	/// Use this to store application specific body data.
+	void* userData;
+
+	/// The body type: static, kinematic, or dynamic.
+	b2BodyType type;
 
 	/// The initial world rotation of the body. Use b2MakeRot() if you have an angle.
 	b2Rot rotation;
@@ -248,21 +254,18 @@ typedef struct b2BodyDef
 	/// Non-dimensional. Recommended range [0.01, 0.5]. Default is 0.5 for high performance with low tunneling risk.
 	float safetyFactor;
 
-	/// Optional body name for debugging. Up to B2_NAME_LENGTH characters
-	const char* name;
-
-	/// Use this to store application specific body data.
-	void* userData;
+	/// Used internally to detect a valid definition. DO NOT SET.
+	uint16_t internalValue;
 
 	/// Motions locks to restrict linear and angular movement.
 	/// Caution: may lead to softer constraints along the locked direction
 	b2MotionLocks motionLocks;
 
 	/// Set this flag to false if this body should never fall asleep.
-	bool enableSleep;
+	bool enableSleep : 1;
 
 	/// Is this body initially awake or sleeping?
-	bool isAwake;
+	bool isAwake : 1;
 
 	/// Treat this body as a high speed object that performs continuous collision detection
 	/// against dynamic and kinematic bodies, but not other bullet bodies.
@@ -278,21 +281,18 @@ typedef struct b2BodyDef
 	/// So what are good use cases for bullets? Pinball games or games with dynamic containers that hold other objects.
 	/// It should be a use case where it doesn't break the game if there is a collision missed, but having them
 	/// captured improves the quality of the game.
-	bool isBullet;
+	bool isBullet : 1;
 
 	/// Used to disable a body. A disabled body does not move or collide.
-	bool isEnabled;
+	bool isEnabled : 1;
 
 	/// This allows this body to bypass rotational speed limits. Should only be used
 	/// for circular objects, like wheels.
-	bool allowFastRotation;
+	bool allowFastRotation : 1;
 
 	/// Enable contact recycling. True by default. Leaving this enabled improves performance
 	/// but may lead to ghost collision that should be avoided on characters.
-	bool enableContactRecycling;
-
-	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	bool enableContactRecycling : 1;
 } b2BodyDef;
 
 /// Use this to initialize your body definition
@@ -423,51 +423,51 @@ typedef struct b2ShapeDef
 	/// The surface material for this shape.
 	b2SurfaceMaterial material;
 
+	/// Collision filtering data.
+	b2Filter filter;
+
 	/// The density, usually in kg/m^2.
 	/// This is not part of the surface material because this is for the interior, which may have
 	/// other considerations, such as being hollow. For example a wood barrel may be hollow or full of water.
 	float density;
 
-	/// Collision filtering data.
-	b2Filter filter;
+	/// Used internally to detect a valid definition. DO NOT SET.
+	uint16_t internalValue;
 
 	/// Enable custom filtering. Only one of the two shapes needs to enable custom filtering. See b2WorldDef.
-	bool enableCustomFiltering;
+	bool enableCustomFiltering : 1;
 
 	/// A sensor shape generates overlap events but never generates a collision response.
 	/// Sensors do not have continuous collision. Instead, use a ray or shape cast for those scenarios.
 	/// Sensors still contribute to the body mass if they have non-zero density.
 	/// @note Sensor events are disabled by default.
 	/// @see enableSensorEvents
-	bool isSensor;
+	bool isSensor : 1;
 
 	/// Enable sensor events for this shape. This applies to sensors and non-sensors. Both shapes involved must have this flag set
 	/// to true. False by default, even for sensors.
-	bool enableSensorEvents;
+	bool enableSensorEvents : 1;
 
 	/// Enable contact events for this shape. Only applies to kinematic and dynamic bodies. Only one shape involved needs this
 	/// flag set to true. Ignored for sensors. False by default.
-	bool enableContactEvents;
+	bool enableContactEvents : 1;
 
 	/// Enable hit events for this shape. Only applies to kinematic and dynamic bodies. Only one shape involved needs this flag
 	/// set to true. Ignored for sensors. False by default.
-	bool enableHitEvents;
+	bool enableHitEvents : 1;
 
 	/// Enable pre-solve contact events for this shape. Only applies to dynamic bodies. These are expensive
 	/// and must be carefully handled due to multithreading. Ignored for sensors.
-	bool enablePreSolveEvents;
+	bool enablePreSolveEvents : 1;
 
 	/// When shapes are created they will scan the environment for collision the next time step. This can significantly slow down
 	/// static body creation when there are many static shapes.
 	/// This is flag is ignored for dynamic and kinematic shapes which always invoke contact creation.
-	bool invokeContactCreation;
+	bool invokeContactCreation : 1;
 
 	/// Should the body update the mass properties when this shape is created. Default is true.
 	/// Warning: if this is false, you MUST call b2Body_UpdateMassFromShapes or b2Body_SetMassData before simulating the world.
-	bool updateBodyMass;
-
-	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	bool updateBodyMass : 1;
 } b2ShapeDef;
 
 /// Use this to initialize your shape definition
@@ -497,6 +497,12 @@ typedef struct b2ChainDef
 	/// the last and first point form a segment. Cloned.
 	const b2Vec2* points;
 
+	/// One material for the whole chain or one for each segment. Cloned.
+	const b2SurfaceMaterial* materials;
+
+	/// Contact filtering data.
+	b2Filter filter;
+
 	/// The point count. At least 2 for an open chain and at least 3 for a loop.
 	/// segmentCount = isLoop ? pointCount : pointCount - 1
 	int pointCount;
@@ -509,23 +515,17 @@ typedef struct b2ChainDef
 	/// than B2_LINEAR_SLOP. Ignored for loops.
 	b2Vec2 ghost2;
 
-	/// One material for the whole chain or one for each segment. Cloned.
-	const b2SurfaceMaterial* materials;
-
 	/// The material count. Must be 1 or the segment count.
 	int materialCount;
 
-	/// Contact filtering data.
-	b2Filter filter;
+	/// Used internally to detect a valid definition. DO NOT SET.
+	uint16_t internalValue;
 
 	/// Indicates a closed chain formed by connecting the first and last point.
-	bool isLoop;
+	bool isLoop : 1;
 
 	/// Enable sensors to detect this chain. False by default.
-	bool enableSensorEvents;
-
-	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	bool enableSensorEvents : 1;
 } b2ChainDef;
 
 /// Use this to initialize your chain definition
@@ -612,12 +612,6 @@ typedef struct b2JointDef
 	/// User data pointer
 	void* userData;
 
-	/// The first attached body
-	b2BodyId bodyIdA;
-
-	/// The second attached body
-	b2BodyId bodyIdB;
-
 	/// The first local joint frame
 	b2Transform localFrameA;
 
@@ -639,9 +633,14 @@ typedef struct b2JointDef
 	/// Debug draw scale
 	float drawScale;
 
-	/// Set this flag to true if the attached bodies should collide
-	bool collideConnected;
+	/// The first attached body
+	b2BodyId bodyIdA;
 
+	/// The second attached body
+	b2BodyId bodyIdB;
+
+	/// Set this flag to true if the attached bodies should collide
+	bool collideConnected : 1;
 } b2JointDef;
 
 /// Distance joint definition
@@ -656,10 +655,6 @@ typedef struct b2DistanceJointDef
 	/// The rest length of this joint. Clamped to a stable minimum value.
 	float length;
 
-	/// Enable the distance constraint to behave like a spring. If false
-	/// then the distance joint will be rigid, overriding the limit and motor.
-	bool enableSpring;
-
 	/// The lower spring force controls how much tension it can sustain
 	float lowerSpringForce;
 
@@ -672,17 +667,11 @@ typedef struct b2DistanceJointDef
 	/// The spring linear damping ratio, non-dimensional
 	float dampingRatio;
 
-	/// Enable/disable the joint limit
-	bool enableLimit;
-
 	/// Minimum length for limit. Clamped to a stable minimum value.
 	float minLength;
 
 	/// Maximum length for limit. Must be greater than or equal to the minimum length.
 	float maxLength;
-
-	/// Enable/disable the joint motor
-	bool enableMotor;
 
 	/// The maximum motor force, usually in newtons
 	float maxMotorForce;
@@ -691,7 +680,17 @@ typedef struct b2DistanceJointDef
 	float motorSpeed;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
+
+	/// Enable the distance constraint to behave like a spring. If false
+	/// then the distance joint will be rigid, overriding the limit and motor.
+	bool enableSpring : 1;
+
+	/// Enable/disable the joint limit
+	bool enableLimit : 1;
+
+	/// Enable/disable the joint motor
+	bool enableMotor : 1;
 } b2DistanceJointDef;
 
 /// Use this to initialize your joint definition
@@ -707,7 +706,7 @@ typedef struct b2FilterJointDef
 	b2JointDef base;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
 } b2FilterJointDef;
 
 /// Use this to initialize your joint definition
@@ -753,7 +752,7 @@ typedef struct b2MotorJointDef
 	float maxSpringTorque;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
 } b2MotorJointDef;
 
 /// Use this to initialize your joint definition
@@ -775,7 +774,7 @@ typedef struct b2MoverJointDef
 	b2Vec2 maxVelocityForce;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
 } b2MoverJointDef;
 
 /// Use this to initialize your joint definition
@@ -816,7 +815,7 @@ typedef struct b2PogoJointDef
 	float velocity;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
 } b2PogoJointDef;
 
 /// Use this to initialize your joint definition
@@ -832,9 +831,6 @@ typedef struct b2PrismaticJointDef
 	/// Base joint definition
 	b2JointDef base;
 
-	/// Enable a linear spring along the prismatic joint axis
-	bool enableSpring;
-
 	/// The spring stiffness Hertz, cycles per second
 	float hertz;
 
@@ -845,17 +841,11 @@ typedef struct b2PrismaticJointDef
 	/// to this translation.
 	float targetTranslation;
 
-	/// Enable/disable the joint limit
-	bool enableLimit;
-
 	/// The lower translation limit
 	float lowerTranslation;
 
 	/// The upper translation limit
 	float upperTranslation;
-
-	/// Enable/disable the joint motor
-	bool enableMotor;
 
 	/// The maximum motor force, typically in newtons
 	float maxMotorForce;
@@ -864,7 +854,16 @@ typedef struct b2PrismaticJointDef
 	float motorSpeed;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
+
+	/// Enable a linear spring along the prismatic joint axis
+	bool enableSpring : 1;
+
+	/// Enable/disable the joint limit
+	bool enableLimit : 1;
+
+	/// Enable/disable the joint motor
+	bool enableMotor : 1;
 } b2PrismaticJointDef;
 
 /// Use this to initialize your joint definition
@@ -883,26 +882,17 @@ typedef struct b2RevoluteJointDef
 	/// to this angle.
 	float targetAngle;
 
-	/// Enable a rotational spring on the revolute hinge axis
-	bool enableSpring;
-
 	/// The spring stiffness Hertz, cycles per second
 	float hertz;
 
 	/// The spring damping ratio, non-dimensional
 	float dampingRatio;
 
-	/// A flag to enable joint limits
-	bool enableLimit;
-
 	/// The lower angle for the joint limit in radians. Minimum of -0.99*pi radians.
 	float lowerAngle;
 
 	/// The upper angle for the joint limit in radians. Maximum of 0.99*pi radians.
 	float upperAngle;
-
-	/// A flag to enable the joint motor
-	bool enableMotor;
 
 	/// The maximum motor torque, typically in newton-meters
 	float maxMotorTorque;
@@ -911,7 +901,16 @@ typedef struct b2RevoluteJointDef
 	float motorSpeed;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
+
+	/// Enable a rotational spring on the revolute hinge axis
+	bool enableSpring : 1;
+
+	/// A flag to enable joint limits
+	bool enableLimit : 1;
+
+	/// A flag to enable the joint motor
+	bool enableMotor : 1;
 } b2RevoluteJointDef;
 
 /// Use this to initialize your joint definition.
@@ -941,7 +940,7 @@ typedef struct b2WeldJointDef
 	float angularDampingRatio;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
 } b2WeldJointDef;
 
 /// Use this to initialize your joint definition
@@ -957,26 +956,17 @@ typedef struct b2WheelJointDef
 	/// Base joint definition
 	b2JointDef base;
 
-	/// Enable a linear spring along the local axis
-	bool enableSpring;
-
 	/// Spring stiffness in Hertz
 	float hertz;
 
 	/// Spring damping ratio, non-dimensional
 	float dampingRatio;
 
-	/// Enable/disable the joint linear limit
-	bool enableLimit;
-
 	/// The lower translation limit
 	float lowerTranslation;
 
 	/// The upper translation limit
 	float upperTranslation;
-
-	/// Enable/disable the joint rotational motor
-	bool enableMotor;
 
 	/// The maximum motor torque, typically in newton-meters
 	float maxMotorTorque;
@@ -985,7 +975,16 @@ typedef struct b2WheelJointDef
 	float motorSpeed;
 
 	/// Used internally to detect a valid definition. DO NOT SET.
-	int internalValue;
+	uint16_t internalValue;
+
+	/// Enable a linear spring along the local axis
+	bool enableSpring : 1;
+
+	/// Enable/disable the joint linear limit
+	bool enableLimit : 1;
+
+	/// Enable/disable the joint rotational motor
+	bool enableMotor : 1;
 } b2WheelJointDef;
 
 /// Use this to initialize your joint definition
