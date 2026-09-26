@@ -75,11 +75,16 @@ REPO_ROOT = os.path.dirname( os.path.abspath( __file__ ) )
 
 # Friendly names for common markers
 EVENTS = {
-    "globals": "physics_world$GLOBALS",
+    "globals": "pack_hooks$GLOBALS",
     "pre_step": "b2World_Step$HEADER",
     "post_step": "b2World_Step$FOOTER",
     "contact_begin": "b2Collide$CONTACT_BEGIN",
     "contact_end": "b2Collide$CONTACT_END",
+    "contact_hit": "b2Solve$CONTACT_HIT",
+    "sensor_begin": "b2PackSensorBegin$SENSOR_BEGIN",
+    "sensor_end": "b2PackSensorEnd$SENSOR_END",
+    "custom_filter": "b2PackCustomFilter$FILTER",
+    "pre_solve": "b2UpdateContact$PRE_SOLVE",
 }
 
 # //$scope$POINT on a line of its own
@@ -101,6 +106,10 @@ class Marker:
     @property
     def file_scope( self ):
         return self.name.endswith( "$GLOBALS" )
+
+    @property
+    def worker_threads( self ):
+        return "worker threads" in self.doc.lower()
 
 
 @dataclasses.dataclass
@@ -264,6 +273,11 @@ def apply_injections( files, markers, injections ):
             raise BuildError(
                 f"{inj.origin}: unknown marker '{inj.marker}'.{hint} Run box2d_pack.py --list-markers to see all." )
         by_marker.setdefault( inj.marker, [] ).append( inj )
+
+    for name in sorted( by_marker ):
+        if markers[name].worker_threads:
+            print( f"box2d_pack: note: {name} runs on worker threads, injected code must be thread-safe",
+                   file=sys.stderr )
 
     by_file = {}
     for name, injs in by_marker.items():
@@ -437,7 +451,8 @@ def _print_markers( markers ):
     for name in sorted( markers, key=lambda n: ( markers[n].path, markers[n].line ) ):
         m = markers[name]
         alias = f"  (event: {aliases[name]})" if name in aliases else ""
-        print( f"{name}{alias}\n    {m.path}:{m.line}" )
+        threads = "  [WORKER THREADS]" if m.worker_threads else ""
+        print( f"{name}{alias}{threads}\n    {m.path}:{m.line}" )
         if m.doc:
             print( f"    {m.doc}" )
 

@@ -292,15 +292,20 @@ Injection file:
 - Code comes from `"code"` (a string or a list of lines) or `"code_file"`.
 - Compiler errors point at the JSON entry or snippet file, not at the patched copy.
 
-| Event | Marker | In scope |
-| :---- | :---- | :---- |
-| `globals` | `physics_world$GLOBALS` | file scope, for declarations |
-| `pre_step` | `b2World_Step$HEADER` | `world`, `worldId`, `timeStep`, `subStepCount`. The world is unlocked. |
-| `post_step` | `b2World_Step$FOOTER` | `world`, `worldId`, `timeStep`. The world is unlocked. |
-| `contact_begin` | `b2Collide$CONTACT_BEGIN` | `shapeA`, `shapeB` (with `->userData`), shape ids, `contactFullId`, `contactSim->manifold`. Single threaded. |
-| `contact_end` | `b2Collide$CONTACT_END` | `shapeA`, `shapeB`, shape ids, `contactFullId`. Single threaded. |
+| Event | Marker | Thread | In scope |
+| :---- | :---- | :---- | :---- |
+| `globals` | `pack_hooks$GLOBALS` | | file scope in every engine file with markers, declarations only |
+| `pre_step` | `b2World_Step$HEADER` | main | `world`, `worldId`, `timeStep`, `subStepCount`. The world is unlocked. |
+| `post_step` | `b2World_Step$FOOTER` | main | `world`, `worldId`, `timeStep`. The world is unlocked. |
+| `contact_begin` | `b2Collide$CONTACT_BEGIN` | single | `shapeA`, `shapeB` (with `->userData`), shape ids, `contactFullId`, `contactSim->manifold` |
+| `contact_end` | `b2Collide$CONTACT_END` | single | `shapeA`, `shapeB`, shape ids, `contactFullId` |
+| `contact_hit` | `b2Solve$CONTACT_HIT` | single | `shapeA`, `shapeB`, `event` (point, normal, approach speed) |
+| `sensor_begin` | `b2PackSensorBegin$SENSOR_BEGIN` | single | `sensorShape`, `visitorShape`, ids |
+| `sensor_end` | `b2PackSensorEnd$SENSOR_END` | single | `sensorShape`, `visitorShape` (`NULL` if destroyed), ids |
+| `custom_filter` | `b2PackCustomFilter$FILTER` | **workers** | `shapeA`, `shapeB`, `shouldCollide` |
+| `pre_solve` | `b2UpdateContact$PRE_SOLVE` | **workers** | `world`, `shapeA`, `shapeB`, `contactSim->manifold` |
 
-Defining `B2_PACK_NO_CONTACT_BEGIN_ARRAY` or `B2_PACK_NO_CONTACT_END_ARRAY` skips filling that event array when the injected code handles the events.
+`B2_PACK_NO_*` defines turn off the engine's own event arrays and callbacks when injected code replaces them. See [INTRUSIVENGINE.md](INTRUSIVENGINE.md) for the list, the threading rules, and `test/pack/run_pack_tests.py`, which checks that every marker behaves exactly like the API it replaces.
 
 ### Demo: arena brawl (`examples/pack_game`)
 
@@ -314,7 +319,19 @@ Cachegrind, standard events vs injected, 72,943 begin events:
 | L1 data misses | 75.88M | 75.50M | -0.50% |
 | Last-level data misses | 84,080 | 84,081 | 0 |
 
-Each injected event saves about 74 instructions and 5.2 L1 data misses: the array write, the array walk, and two user data lookups. The whole-program total barely moves because this demo has about 121 events per step and the physics step dominates. Games with far more events per step, or with larger worlds where shapes fall out of cache, gain proportionally more. With `--lto`, gcc inlines the game logic directly into the engine's contact loop.
+Each injected event saves about 74 instructions and 5.2 L1 data misses: the array write, the array walk, and two user data lookups. The whole-program total barely moves because the physics step dominates.
+
+### Demo: bullet storm (`examples/pack_bullets`)
+
+20,000 bullets fly into 4,800 static targets. Each hit damages the target and recycles the bullet, 2,112 contact begin events per step. Both builds print the same checksum. Cachegrind, 120 steps:
+
+| | Standard events | Injected | Difference |
+| :---- | ----: | ----: | ----: |
+| Instructions | 10,644.6M | 10,627.8M | -0.16% |
+| L1 data misses | 138.48M | 138.12M | -0.26% |
+| Last-level data misses | 41.41M | 41.66M | +0.62% |
+
+With 17 times the arena's event rate, the instruction saving stays at 0.16%, about 66 per event, because each event carries much larger engine work. Last-level misses rise. The handler now touches game objects in the middle of the step, which evicts engine data, and the game's post-step recycle pass no longer finds those objects in cache. Injection pays off when the handler uses engine data that is hot at the marker, or records little. It does not when the game does follow-up work on the same objects after the step. See [INTRUSIVENGINE.md](INTRUSIVENGINE.md).
 
 # Box2D 
 
