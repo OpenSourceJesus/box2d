@@ -1689,8 +1689,11 @@ public:
 
 	bool DrawControls() override
 	{
-		if ( ImGui::Checkbox( "Lock Linear X", &m_motionLocks.linearX ) )
+		// b2MotionLocks fields are bit-fields, so ImGui needs a bool it can point at
+		bool linearX = m_motionLocks.linearX;
+		if ( ImGui::Checkbox( "Lock Linear X", &linearX ) )
 		{
+			m_motionLocks.linearX = linearX;
 			for ( int i = 0; i < e_count; ++i )
 			{
 				b2Body_SetMotionLocks( m_bodyIds[i], m_motionLocks );
@@ -1698,8 +1701,11 @@ public:
 			}
 		}
 
-		if ( ImGui::Checkbox( "Lock Linear Y", &m_motionLocks.linearY ) )
+		// b2MotionLocks fields are bit-fields, so ImGui needs a bool it can point at
+		bool linearY = m_motionLocks.linearY;
+		if ( ImGui::Checkbox( "Lock Linear Y", &linearY ) )
 		{
+			m_motionLocks.linearY = linearY;
 			for ( int i = 0; i < e_count; ++i )
 			{
 				b2Body_SetMotionLocks( m_bodyIds[i], m_motionLocks );
@@ -1707,8 +1713,11 @@ public:
 			}
 		}
 
-		if ( ImGui::Checkbox( "Lock Angular Z", &m_motionLocks.angularZ ) )
+		// b2MotionLocks fields are bit-fields, so ImGui needs a bool it can point at
+		bool angularZ = m_motionLocks.angularZ;
+		if ( ImGui::Checkbox( "Lock Angular Z", &angularZ ) )
 		{
+			m_motionLocks.angularZ = angularZ;
 			for ( int i = 0; i < e_count; ++i )
 			{
 				b2Body_SetMotionLocks( m_bodyIds[i], m_motionLocks );

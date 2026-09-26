@@ -13,13 +13,13 @@
 #include <atomic>
 #include <imgui.h>
 
-enum CollisionBits : uint64_t
+enum CollisionBits : uint16_t
 {
 	StaticBit = 0x0001,
 	MoverBit = 0x0002,
 	DynamicBit = 0x0004,
 
-	AllBits = ~0u,
+	AllBits = 0xFFFF,
 };
 
 // The ground probe is a point, a circle, or a segment, all carried by the proxy.

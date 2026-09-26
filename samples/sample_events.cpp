@@ -670,7 +670,7 @@ public:
 		PLAYER = 0x00000002,
 		FOOT = 0x00000004,
 
-		ALL_BITS = ( ~0u )
+		ALL_BITS = 0xFFFF
 	};
 
 	explicit FootSensor( SampleContext* context )
@@ -1414,7 +1414,7 @@ public:
 		SENSOR = 0x00000002,
 		DEFAULT = 0x00000004,
 
-		ALL_BITS = ( ~0u )
+		ALL_BITS = 0xFFFF
 	};
 
 	explicit SensorTypes( SampleContext* context )

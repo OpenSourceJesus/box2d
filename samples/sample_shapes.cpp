@@ -625,7 +625,7 @@ public:
 		TEAM2 = 0x00000004,
 		TEAM3 = 0x00000008,
 
-		ALL_BITS = ( ~0u )
+		ALL_BITS = 0xFFFF
 	};
 
 	explicit ShapeFilter( SampleContext* context )

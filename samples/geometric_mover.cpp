@@ -278,7 +278,7 @@ void GeometricMover::Update( float timeStep, float throttle )
 	// Don't cast against other movers.
 	b2QueryFilter castFilter = {
 		.categoryBits = m_filter.categoryBits,
-		.maskBits = ( m_filter.maskBits & ~m_filter.categoryBits ),
+		.maskBits = (uint16_t)( m_filter.maskBits & ~m_filter.categoryBits ),
 	};
 
 	for ( int iteration = 0; iteration < 5; ++iteration )

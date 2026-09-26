@@ -18,8 +18,8 @@
 
 inline bool operator<( b2BodyId a, b2BodyId b )
 {
-	uint64_t ua = b2StoreBodyId( a );
-	uint64_t ub = b2StoreBodyId( b );
+	uint32_t ua = b2StoreBodyId( a );
+	uint32_t ub = b2StoreBodyId( b );
 	return ua < ub;
 }
 
