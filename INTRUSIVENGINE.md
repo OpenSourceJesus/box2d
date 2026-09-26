@@ -50,10 +50,10 @@ print( result.exe )
 
 ## Pipeline
 
-```mermaid
+```
 flowchart LR
-    A[Engine sources<br/>with marker comments] --> C[Copy to<br/>/tmp/box2d_src]
-    B[inject.json<br/>+ snippet files] --> D[Replace markers<br/>in the copies]
+    A[Engine sources with marker comments] --> C[Copy to /tmp/box2d_src]
+    B[inject.json+ snippet files] --> D[Replace markers in the copies]
     C --> D
     D --> E[gcc: engine objects<br/>/tmp/b2_*.o]
     E --> F[/tmp/libbox2d.a]
