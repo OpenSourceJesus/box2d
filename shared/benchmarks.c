@@ -30,7 +30,7 @@ void CreateJointGrid( b2WorldId worldId )
 	b2ShapeDef shapeDef = b2DefaultShapeDef();
 	shapeDef.density = 1.0f;
 	shapeDef.filter.categoryBits = 2;
-	shapeDef.filter.maskBits = ~2u;
+	shapeDef.filter.maskBits = (uint16_t)~2u;
 
 	b2Circle circle = { { 0.0f, 0.0f }, 0.4f };
 
@@ -1065,7 +1065,7 @@ void CreateQueries( b2WorldId worldId )
 
 			b2Polygon box =
 				orientation > 0.5f ? b2MakeBox( ratio * halfWidth, halfWidth ) : b2MakeBox( halfWidth, ratio * halfWidth );
-			shapeDef.filter.categoryBits = 1ull << category;
+			shapeDef.filter.categoryBits = (uint16_t)( 1u << category );
 			b2CreatePolygonShape( bodyId, &shapeDef, &box );
 		}
 	}
@@ -1561,7 +1561,9 @@ b2TreeStats GetTreeCastBenchmarkStats( void )
 // the shape of a level that streams.
 
 #define TILE_PERIOD 40.0f
-#define TILE_CYCLE_COUNT ( BENCHMARK_DEBUG ? 10 : 600 )
+// Box2D-Packed: sized to stay under the 65535 shape handle limit. 130 cycles is 520 ground bodies of
+// roughly 120 tiles each (about 62,400 static shapes) plus 450 dynamic boxes.
+#define TILE_CYCLE_COUNT ( BENCHMARK_DEBUG ? 10 : 130 )
 #define TILE_GRID_SIZE 1.0f
 #define TILE_COLUMNS_PER_BODY 10
 #define TILE_QUERY_COUNT ( BENCHMARK_DEBUG ? 50 : 500 )
