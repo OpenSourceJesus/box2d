@@ -34,9 +34,15 @@
 /// @warning modifying this can have a significant impact on stability
 #define B2_LINEAR_SLOP ( 0.005f * b2_lengthUnitsPerMeter )
 
-/// Maximum number of simultaneous worlds that can be allocated
+/// Maximum number of simultaneous worlds that can be allocated.
+/// Box2D-Packed uses a single-world design: handles do not store a world index,
+/// so only one world may exist at a time.
 #ifndef B2_MAX_WORLDS
-#define B2_MAX_WORLDS 128
+#define B2_MAX_WORLDS 1
+#endif
+
+#if B2_MAX_WORLDS != 1
+#error "Box2D-Packed supports exactly one world. Handles do not encode a world index."
 #endif
 
 /// Maximum length of the body name. Can be 0 if you don't need names.
