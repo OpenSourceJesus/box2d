@@ -1,0 +1,25 @@
+{
+  "comment": "Same logic as the standard build of markers.c, run at the injection markers.",
+  "defines": {
+    "B2_PACK_NO_SENSOR_BEGIN_ARRAY": 1,
+    "B2_PACK_NO_SENSOR_END_ARRAY": 1,
+    "B2_PACK_NO_CONTACT_HIT_ARRAY": 1,
+    "B2_PACK_NO_CUSTOM_FILTER_FCN": 1,
+    "B2_PACK_NO_PRE_SOLVE_FCN": 1
+  },
+  "globals": [
+    "void Test_SensorBegin( void* sensorData, void* visitorData );",
+    "void Test_SensorEnd( void* sensorData, void* visitorData );",
+    "void Test_Hit( void* dataA, void* dataB, float approachSpeed );",
+    "int Test_Filter( void* dataA, void* dataB );",
+    "int Test_PreSolve( void* dataA, void* dataB, b2Manifold* manifold );"
+  ],
+  "inject": [
+    { "event": "sensor_begin", "code": "Test_SensorBegin( sensorShape->userData, visitorShape->userData );" },
+    { "event": "sensor_end",
+      "code": "Test_SensorEnd( sensorShape->userData, visitorShape != NULL ? visitorShape->userData : NULL );" },
+    { "event": "contact_hit", "code": "Test_Hit( shapeA->userData, shapeB->userData, event.approachSpeed );" },
+    { "event": "custom_filter", "code": "shouldCollide = Test_Filter( shapeA->userData, shapeB->userData ) != 0;" },
+    { "event": "pre_solve", "code": "Test_PreSolve( shapeA->userData, shapeB->userData, &contactSim->manifold );" }
+  ]
+}
