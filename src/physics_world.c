@@ -2652,8 +2652,9 @@ b2RayResult b2World_CastRayClosest( b2WorldId worldId, b2Pos origin, b2Vec2 tran
 	{
 		b2TreeStats treeResult =
 			b2DynamicTree_CastRay( world->broadPhase.trees + i, &input, filter.maskBits, RayCastCallback, &worldContext );
-		result.nodeVisits += treeResult.nodeVisits;
-		result.leafVisits += treeResult.leafVisits;
+		// Box2D-Packed: visit counts are uint16_t diagnostics, saturate rather than wrap
+		result.nodeVisits = (uint16_t)b2MinInt( result.nodeVisits + treeResult.nodeVisits, UINT16_MAX );
+		result.leafVisits = (uint16_t)b2MinInt( result.leafVisits + treeResult.leafVisits, UINT16_MAX );
 
 		if ( worldContext.fraction == 0.0f )
 		{
@@ -3139,7 +3140,7 @@ static bool ExplosionCallback( int proxyId, uint64_t userData, void* context )
 
 void b2World_Explode( b2WorldId worldId, const b2ExplosionDef* explosionDef )
 {
-	uint64_t maskBits = explosionDef->maskBits;
+	uint16_t maskBits = explosionDef->maskBits;
 	b2Pos position = explosionDef->position;
 	float radius = explosionDef->radius;
 	float falloff = explosionDef->falloff;

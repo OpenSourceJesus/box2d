@@ -207,9 +207,9 @@ void b2RecW_CHAINSEG( b2RecBuffer* buf, b2ChainSegment v )
 
 void b2RecW_FILTER( b2RecBuffer* buf, b2Filter v )
 {
-	b2RecW_U64( buf, v.categoryBits );
-	b2RecW_U64( buf, v.maskBits );
-	b2RecW_I32( buf, v.groupIndex );
+	b2RecW_U16( buf, v.categoryBits );
+	b2RecW_U16( buf, v.maskBits );
+	b2RecW_U16( buf, (uint16_t)v.groupIndex );
 }
 
 void b2RecW_MATERIAL( b2RecBuffer* buf, b2SurfaceMaterial v )
@@ -327,7 +327,7 @@ void b2RecW_CHAINDEF( b2RecBuffer* buf, b2ChainDef v )
 
 void b2RecW_EXPLOSIONDEF( b2RecBuffer* buf, b2ExplosionDef v )
 {
-	b2RecW_U64( buf, v.maskBits );
+	b2RecW_U16( buf, v.maskBits );
 	b2RecW_POSITION( buf, v.position );
 	b2RecW_F32( buf, v.radius );
 	b2RecW_F32( buf, v.falloff );
@@ -469,8 +469,8 @@ void b2RecW_AABB( b2RecBuffer* buf, b2AABB v )
 
 void b2RecW_QUERYFILTER( b2RecBuffer* buf, b2QueryFilter v )
 {
-	b2RecW_U64( buf, v.categoryBits );
-	b2RecW_U64( buf, v.maskBits );
+	b2RecW_U16( buf, v.categoryBits );
+	b2RecW_U16( buf, v.maskBits );
 }
 
 void b2RecW_SHAPEPROXY( b2RecBuffer* buf, b2ShapeProxy v )
@@ -503,8 +503,8 @@ void b2RecW_RAYRESULT( b2RecBuffer* buf, b2RayResult v )
 	b2RecW_POSITION( buf, v.point );
 	b2RecW_VEC2( buf, v.normal );
 	b2RecW_F32( buf, v.fraction );
-	b2RecW_I32( buf, v.nodeVisits );
-	b2RecW_I32( buf, v.leafVisits );
+	b2RecW_U16( buf, v.nodeVisits );
+	b2RecW_U16( buf, v.leafVisits );
 	b2RecW_BOOL( buf, v.hit );
 }
 

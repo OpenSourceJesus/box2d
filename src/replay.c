@@ -247,9 +247,9 @@ b2ChainSegment b2RecR_CHAINSEG( b2RecReader* rdr )
 b2Filter b2RecR_FILTER( b2RecReader* rdr )
 {
 	b2Filter f;
-	f.categoryBits = b2RecR_U64( rdr );
-	f.maskBits = b2RecR_U64( rdr );
-	f.groupIndex = b2RecR_I32( rdr );
+	f.categoryBits = b2RecR_U16( rdr );
+	f.maskBits = b2RecR_U16( rdr );
+	f.groupIndex = (int16_t)b2RecR_U16( rdr );
 	return f;
 }
 
@@ -415,7 +415,7 @@ b2ChainDef b2RecR_CHAINDEF( b2RecReader* rdr )
 b2ExplosionDef b2RecR_EXPLOSIONDEF( b2RecReader* rdr )
 {
 	b2ExplosionDef def = b2DefaultExplosionDef();
-	def.maskBits = b2RecR_U64( rdr );
+	def.maskBits = b2RecR_U16( rdr );
 	def.position = b2RecR_POSITION( rdr );
 	def.radius = b2RecR_F32( rdr );
 	def.falloff = b2RecR_F32( rdr );
@@ -579,8 +579,8 @@ b2AABB b2RecR_AABB( b2RecReader* rdr )
 b2QueryFilter b2RecR_QUERYFILTER( b2RecReader* rdr )
 {
 	b2QueryFilter f;
-	f.categoryBits = b2RecR_U64( rdr );
-	f.maskBits = b2RecR_U64( rdr );
+	f.categoryBits = b2RecR_U16( rdr );
+	f.maskBits = b2RecR_U16( rdr );
 	return f;
 }
 
@@ -621,8 +621,8 @@ b2RayResult b2RecR_RAYRESULT( b2RecReader* rdr )
 	v.point = b2RecR_POSITION( rdr );
 	v.normal = b2RecR_VEC2( rdr );
 	v.fraction = b2RecR_F32( rdr );
-	v.nodeVisits = b2RecR_I32( rdr );
-	v.leafVisits = b2RecR_I32( rdr );
+	v.nodeVisits = b2RecR_U16( rdr );
+	v.leafVisits = b2RecR_U16( rdr );
 	v.hit = b2RecR_BOOL( rdr );
 	return v;
 }
