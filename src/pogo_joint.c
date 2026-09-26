@@ -17,7 +17,7 @@ void b2PogoJoint_SetRestLength( b2JointId jointId, float length )
 {
 	B2_CHECK_INPUT( b2IsValidFloat( length ) );
 
-	b2World* world = b2GetWorld( jointId.world0 );
+	b2World* world = b2GetWorld();
 	B2_REC( world, PogoJointSetRestLength, jointId, length );
 	
 	b2JointSim* joint = b2GetJointSimCheckType( jointId, b2_pogoJoint );
@@ -40,7 +40,7 @@ void b2PogoJoint_SetSpringHertz( b2JointId jointId, float hertz )
 {
 	B2_CHECK_INPUT( b2IsValidFloat( hertz ) );
 
-	 b2World* world = b2GetWorld( jointId.world0 );
+	 b2World* world = b2GetWorld();
 	 B2_REC( world, PogoJointSetSpringHertz, jointId, hertz );
 
 	b2JointSim* joint = b2GetJointSimCheckType( jointId, b2_pogoJoint );
@@ -51,7 +51,7 @@ void b2PogoJoint_SetSpringDampingRatio( b2JointId jointId, float dampingRatio )
 {
 	B2_CHECK_INPUT( b2IsValidFloat( dampingRatio ) );
 
-	 b2World* world = b2GetWorld( jointId.world0 );
+	 b2World* world = b2GetWorld();
 	 B2_REC( world, PogoJointSetSpringDampingRatio, jointId, dampingRatio );
 
 	b2JointSim* joint = b2GetJointSimCheckType( jointId, b2_pogoJoint );
@@ -66,7 +66,7 @@ float b2PogoJoint_GetSpringDampingRatio( b2JointId jointId )
 
 float b2PogoJoint_GetLength( b2JointId jointId )
 {
-	b2World* world = b2GetWorld( jointId.world0 );
+	b2World* world = b2GetWorld();
 	b2JointSim* jointSim = b2GetJointSimCheckType( jointId, b2_pogoJoint );
 
 	// Relative to body A so the difference stays in float precision far from the origin
