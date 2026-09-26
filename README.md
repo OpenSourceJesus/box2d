@@ -165,7 +165,7 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 
 ### Cachegrind: cache misses vs Box2D v3
 
-Cachegrind simulates the cache, so these counts are exact and repeat identically run to run. Timing on shared hardware could not resolve differences this small.
+Current Box2D-Packed compared with Box2D v3. Cachegrind simulates the cache, so these counts are exact and repeat identically run to run. Timing on shared hardware could not resolve differences this small.
 
 Setup:
 - Simulated caches: 32 KB 8-way L1, 8 MB 16-way last level, 64-byte lines.
@@ -174,11 +174,13 @@ Setup:
 
 | Benchmark | Instructions | L1 data misses | Last-level data misses |
 | :---- | ----: | ----: | ----: |
-| tile_world | -0.1% | -25.0% | **-65.3%** |
-| queries | +0.2% | -7.0% | **-60.4%** |
-| tree_cast | -0.4% | -2.9% | **-7.3%** |
-| smash | +0.2% | -0.1% | **-5.8%** |
-| large_pyramid | +0.3% | -0.3% | **-6.6%** |
+| tile_world | -0.1% | -25.7% | **-65.3%** |
+| queries | +0.2% | -8.6% | **-56.7%** |
+| tree_cast | -0.4% | -2.8% | **-7.3%** |
+| smash | +0.3% | -2.7% | **-5.4%** |
+| large_pyramid | +0.2% | -3.6% | **-18.0%** |
+| many_pyramids | +0.2% | -3.6% | **-1.6%** |
+| joint_grid | +0.0% | -0.3% | **-4.3%** |
 
 Negative is better. The biggest wins are in query-heavy scenes: filtered-out leaves no longer read the proxy array, and query callbacks read one shape cache line instead of three. `tree_cast` does not touch shapes, so its change comes from the tree node layout alone. The instruction count is essentially unchanged, so the savings are memory traffic, which matters more on real hardware with larger worlds and more threads.
 
@@ -255,6 +257,8 @@ What the work so far does deliver:
 Reducing step time requires packing the internal hot-path data next: `b2Shape`, the body and contact simulation arrays, and the dynamic tree.
 
 ## **5\. Compiling User Code Into the Engine (`box2d_pack.py`)**
+
+Full guide: [INTRUSIVENGINE.md](INTRUSIVENGINE.md). Paper: [paper/box2d_packed.pdf](paper/box2d_packed.pdf).
 
 Game code usually learns about contacts after the step. It walks the event arrays, then calls `b2Shape_GetUserData` for each shape, a random memory read per event. `box2d_pack.py` lets game code run inside the engine instead, at the moment the event happens, while the shapes are still in cache.
 
