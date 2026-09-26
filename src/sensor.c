@@ -83,8 +83,8 @@ static bool b2SensorQueryCallback( int proxyId, uint64_t userData, void* context
 		b2CustomFilterFcn* customFilterFcn = queryContext->world->customFilterFcn;
 		if ( customFilterFcn != NULL )
 		{
-			b2ShapeId idA = { sensorShapeId + 1, world->worldId, sensorShape->generation };
-			b2ShapeId idB = { shapeId + 1, world->worldId, otherShape->generation };
+			b2ShapeId idA = { (uint16_t)( sensorShapeId + 1 ), sensorShape->generation };
+			b2ShapeId idB = { (uint16_t)( shapeId + 1 ), otherShape->generation };
 			bool shouldCollide = customFilterFcn( idA, idB, queryContext->world->customFilterContext );
 			if ( shouldCollide == false )
 			{
@@ -280,7 +280,7 @@ void b2OverlapSensors( b2World* world )
 
 			b2Sensor* sensor = b2Array_Get( world->sensors, sensorIndex );
 			b2Shape* sensorShape = b2Array_Get( world->shapes, sensor->shapeId );
-			b2ShapeId sensorId = { sensor->shapeId + 1, world->worldId, sensorShape->generation };
+			b2ShapeId sensorId = { (uint16_t)( sensor->shapeId + 1 ), sensorShape->generation };
 
 			int count1 = sensor->overlaps1.count;
 			int count2 = sensor->overlaps2.count;
@@ -299,7 +299,7 @@ void b2OverlapSensors( b2World* world )
 					if ( r1->generation < r2->generation )
 					{
 						// end
-						b2ShapeId visitorId = { r1->shapeId + 1, world->worldId, r1->generation };
+						b2ShapeId visitorId = { (uint16_t)( r1->shapeId + 1 ), r1->generation };
 						b2SensorEndTouchEvent event = {
 							.sensorShapeId = sensorId,
 							.visitorShapeId = visitorId,
@@ -310,7 +310,7 @@ void b2OverlapSensors( b2World* world )
 					else if ( r1->generation > r2->generation )
 					{
 						// begin
-						b2ShapeId visitorId = { r2->shapeId + 1, world->worldId, r2->generation };
+						b2ShapeId visitorId = { (uint16_t)( r2->shapeId + 1 ), r2->generation };
 						b2SensorBeginTouchEvent event = { sensorId, visitorId };
 						b2Array_Push( world->sensorBeginEvents, event );
 						index2 += 1;
@@ -325,7 +325,7 @@ void b2OverlapSensors( b2World* world )
 				else if ( r1->shapeId < r2->shapeId )
 				{
 					// end
-					b2ShapeId visitorId = { r1->shapeId + 1, world->worldId, r1->generation };
+					b2ShapeId visitorId = { (uint16_t)( r1->shapeId + 1 ), r1->generation };
 					b2SensorEndTouchEvent event = { sensorId, visitorId };
 					b2Array_Push( world->sensorEndEvents[world->endEventArrayIndex], event );
 					index1 += 1;
@@ -333,7 +333,7 @@ void b2OverlapSensors( b2World* world )
 				else
 				{
 					// begin
-					b2ShapeId visitorId = { r2->shapeId + 1, world->worldId, r2->generation };
+					b2ShapeId visitorId = { (uint16_t)( r2->shapeId + 1 ), r2->generation };
 					b2SensorBeginTouchEvent event = { sensorId, visitorId };
 					b2Array_Push( world->sensorBeginEvents, event );
 					index2 += 1;
@@ -344,7 +344,7 @@ void b2OverlapSensors( b2World* world )
 			{
 				// end
 				const b2Visitor* r1 = refs1 + index1;
-				b2ShapeId visitorId = { r1->shapeId + 1, world->worldId, r1->generation };
+				b2ShapeId visitorId = { (uint16_t)( r1->shapeId + 1 ), r1->generation };
 				b2SensorEndTouchEvent event = { sensorId, visitorId };
 				b2Array_Push( world->sensorEndEvents[world->endEventArrayIndex], event );
 				index1 += 1;
@@ -354,7 +354,7 @@ void b2OverlapSensors( b2World* world )
 			{
 				// begin
 				const b2Visitor* r2 = refs2 + index2;
-				b2ShapeId visitorId = { r2->shapeId + 1, world->worldId, r2->generation };
+				b2ShapeId visitorId = { (uint16_t)( r2->shapeId + 1 ), r2->generation };
 				b2SensorBeginTouchEvent event = { sensorId, visitorId };
 				b2Array_Push( world->sensorBeginEvents, event );
 				index2 += 1;
@@ -379,13 +379,11 @@ void b2DestroySensor( b2World* world, b2Shape* sensorShape )
 			.sensorShapeId =
 				{
 					.index1 = sensorShape->id + 1,
-					.world0 = world->worldId,
 					.generation = sensorShape->generation,
 				},
 			.visitorShapeId =
 				{
 					.index1 = ref->shapeId + 1,
-					.world0 = world->worldId,
 					.generation = ref->generation,
 				},
 		};

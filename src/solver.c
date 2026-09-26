@@ -247,8 +247,8 @@ static bool b2ContinuousQueryCallback( int proxyId, uint64_t userData, void* con
 		b2CustomFilterFcn* customFilterFcn = world->customFilterFcn;
 		if ( customFilterFcn != NULL )
 		{
-			b2ShapeId idA = { shape->id + 1, world->worldId, shape->generation };
-			b2ShapeId idB = { fastShape->id + 1, world->worldId, fastShape->generation };
+			b2ShapeId idA = { (uint16_t)( shape->id + 1 ), shape->generation };
+			b2ShapeId idB = { (uint16_t)( fastShape->id + 1 ), fastShape->generation };
 			canCollide = customFilterFcn( idA, idB, world->customFilterContext );
 			if ( canCollide == false )
 			{
@@ -363,8 +363,8 @@ static bool b2ContinuousQueryCallback( int proxyId, uint64_t userData, void* con
 
 		if ( didHit && ( shape->enablePreSolveEvents || fastShape->enablePreSolveEvents ) && world->preContinuousFcn != NULL )
 		{
-			b2ShapeId shapeIdA = { shape->id + 1, world->worldId, shape->generation };
-			b2ShapeId shapeIdB = { fastShape->id + 1, world->worldId, fastShape->generation };
+			b2ShapeId shapeIdA = { (uint16_t)( shape->id + 1 ), shape->generation };
+			b2ShapeId shapeIdB = { (uint16_t)( fastShape->id + 1 ), fastShape->generation };
 
 			// TOI runs in the base frame, lift the hit point back to world for the callback
 			b2Pos worldPoint = b2OffsetPos( continuousContext->base, output.point );
@@ -595,7 +595,6 @@ static void b2FinalizeBodiesTask( int startIndex, int endIndex, int workerIndex,
 	bool enableContinuous = world->enableContinuous;
 	float timeStep = stepContext->dt;
 	float invTimeStep = stepContext->inv_dt;
-	uint16_t worldId = world->worldId;
 
 	// The body move event array should already have the correct size
 	b2BodyMoveEvent* moveEvents = world->bodyMoveEvents.data;
@@ -646,7 +645,7 @@ static void b2FinalizeBodiesTask( int startIndex, int endIndex, int workerIndex,
 		b2Body* body = bodies + sim->bodyId;
 		body->bodyMoveIndex = simIndex;
 		moveEvents[simIndex].transform = sim->transform;
-		moveEvents[simIndex].bodyId = (b2BodyId){ sim->bodyId + 1, worldId, body->generation };
+		moveEvents[simIndex].bodyId = (b2BodyId){ (uint16_t)( sim->bodyId + 1 ), body->generation };
 		moveEvents[simIndex].userData = body->userData;
 		moveEvents[simIndex].fellAsleep = false;
 
@@ -1710,7 +1709,6 @@ void b2Solve( b2World* world, b2StepContext* stepContext )
 			uint64_t* bits = jointStateBitSet->bits;
 
 			b2Joint* jointArray = world->joints.data;
-			uint16_t worldIndex0 = world->worldId;
 
 			for ( uint32_t k = 0; k < wordCount; ++k )
 			{
@@ -1730,7 +1728,6 @@ void b2Solve( b2World* world, b2StepContext* stepContext )
 						.jointId =
 							{
 								.index1 = jointId + 1,
-								.world0 = worldIndex0,
 								.generation = joint->generation,
 							},
 						.userData = joint->userData,
@@ -1782,7 +1779,6 @@ void b2Solve( b2World* world, b2StepContext* stepContext )
 			b2GraphColor* colors = world->constraintGraph.colors;
 			b2Contact* contactArray = world->contacts.data;
 			b2Shape* shapeArray = world->shapes.data;
-			uint16_t worldId = world->worldId;
 
 			uint32_t wordCount = hitEventBitSet->blockCount;
 			uint64_t* bits = hitEventBitSet->bits;
@@ -1844,13 +1840,11 @@ void b2Solve( b2World* world, b2StepContext* stepContext )
 							event.point = b2OffsetPos( bodySimA->center, bestPoint->anchorA );
 						}
 
-						event.shapeIdA = (b2ShapeId){ shapeA->id + 1, worldId, shapeA->generation };
-						event.shapeIdB = (b2ShapeId){ shapeB->id + 1, worldId, shapeB->generation };
+						event.shapeIdA = (b2ShapeId){ (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+						event.shapeIdB = (b2ShapeId){ (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 
 						event.contactId = (b2ContactId){
 							.index1 = contact->contactId + 1,
-							.world0 = worldId,
-							.padding = 0,
 							.generation = contact->generation,
 						};
 
