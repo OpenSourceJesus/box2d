@@ -1,0 +1,8 @@
+{
+  "comment": "Run the bullet storm's contact logic inside the engine. See bullets.c.",
+  "defines": { "B2_PACK_NO_CONTACT_BEGIN_ARRAY": 1 },
+  "globals": "void Game_OnBegin( void* userDataA, void* userDataB );",
+  "inject": [
+    { "event": "contact_begin", "code": "Game_OnBegin( shapeA->userData, shapeB->userData );" }
+  ]
+}
