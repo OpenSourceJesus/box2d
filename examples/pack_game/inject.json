@@ -1,0 +1,11 @@
+{
+  "comment": "Run the arena brawl's contact logic inside the engine. See game.c.",
+  "defines": { "B2_PACK_NO_CONTACT_BEGIN_ARRAY": 1 },
+  "globals": "void Game_OnContactBegin( void* userDataA, void* userDataB );",
+  "inject": [
+    {
+      "event": "contact_begin",
+      "code": "Game_OnContactBegin( shapeA->userData, shapeB->userData );"
+    }
+  ]
+}
