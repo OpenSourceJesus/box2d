@@ -160,6 +160,7 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 - **No power-of-two stride.** `b2Shape` is 264 bytes, not 256. We measured a 256-byte version: the same field of every shape mapped to a quarter of the cache sets, and `large_pyramid` last-level data misses rose 27%. At 264 bytes each shape shifts by 8 bytes, and fields spread across all sets.
 
 - **Narrow phase reads no shapes for awake contacts.** `b2CollideTask` read `shape->bodyId` for both shapes of every contact, two random cache lines, although the id is only needed in a rare fallback for sleeping bodies. It now reads the shape only in that fallback.
+- **`b2ContactSim` is exactly 192 bytes.** The GJK simplex cache (8 bytes) moved to the cold `b2Contact` record, because only chain segment vs polygon/capsule reads it. At 192 bytes, every contact in the 64-byte aligned color arrays starts on a cache line boundary. At 200 bytes, most contacts' hot prefix straddled a fourth line.
 - **`b2BodySim` collide-hot fields first.** `transform`, `center`, `invMass`, `invInertia`, `maxExtent`, and `flags` are now in the first 40 bytes instead of spread over all 96, so the collide task usually touches one cache line per body instead of two.
 
 ### Cachegrind: cache misses vs Box2D v3
@@ -195,7 +196,11 @@ Compared with the previous Box2D-Packed step, with the same Cachegrind setup:
 
 The `large_pyramid` last-level increase is a side effect, not new traffic. The collide task's shape reads used to keep each shape's first line warm for `b2ComputeFatShapeAABB` later in the step. That scene's working set sits right at the 8 MB simulated cache size. In `many_pyramids`, the largest world, last-level misses drop by 3.7M, more than `large_pyramid` gains. `joint_grid` has no contacts and is unaffected.
 
+The 192-byte `b2ContactSim` then changed nothing measurable except `large_pyramid` last-level misses, which fell 17.3%. The other four scenes moved by 0.1% or less. That scene's working set sits at the 8 MB cache boundary, so the 4% smaller contact arrays keep much more of it cached. Treat this as a working-set effect, not a general 17% gain.
+
 ### Investigated and not changed
+
+- **Removing the inverse-mass copies from `b2ContactSim`.** The contact prep pass read them from the body sims instead. It was bit-identical and cut `large_pyramid` last-level misses 23%, but L1 misses rose 3.3% and instructions 0.6%, because prep now gathers body sims at random. `many_pyramids` came out net worse. Moving the simplex cache instead reached the same 192-byte size with no regressions.
 
 - **Body simulation arrays.** In `large_pyramid`, `b2FinalizeBodiesTask` accounts for only about 2% of L1 data misses, and the integrate functions are not in the top 14. `b2BodyState` is already 32 bytes of hot fields, two per cache line.
 - **Contact solver ordering.** The wide contact solver (`Solve`, `WarmStart`, `Push`) accounts for 64% of `large_pyramid` L1 read misses. We tested sorting each graph color's contacts by body index, which is safe because a dynamic body appears at most once per color, and all determinism tests passed. Solver misses were identical to the last digit: they are the sequential stream through the 592-byte wide constraints, not body-state gathers. Cachegrind has no hardware prefetcher, so it counts every line of that stream, but real CPUs hide most of it. The sort added 10% instructions for no gain, so it was dropped. Shrinking the constraint stream (about 148 bytes per contact) needs hardware counters on real machines to evaluate.
@@ -206,7 +211,7 @@ The `large_pyramid` last-level increase is a side effect, not new traffic. The c
 - **65535 live bodies, shapes, chains, and joints per world**, each counted separately. Creating one more logs an error and returns a null id instead of wrapping onto an existing object. A chain is rejected up front if its segments would not all fit.
 - **16 collision categories.** `B2_DEFAULT_MASK_BITS` is `0xFFFF`. `groupIndex` is `int16_t`.
 - `b2RayResult` visit counts are `uint16_t` and saturate at 65535.
-- The recording format is 4.2 and the snapshot version is 13. Older `.b2rec` files and snapshots will not load.
+- The recording format is 4.3 and the snapshot version is 14. Older `.b2rec` files and snapshots will not load.
 - The standalone `b2DynamicTree` API keeps 64-bit category and mask bits for non-physics use.
 
 ### Benchmark: Box2D v3 vs Box2D-Packed (timing, before the hot-path layout changes)
