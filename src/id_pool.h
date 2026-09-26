@@ -5,6 +5,8 @@
 
 #include "container.h"
 
+#include "box2d/id.h"
+
 typedef struct b2IdPool
 {
 	b2Array( int ) freeArray;
@@ -32,4 +34,12 @@ static inline int b2GetIdCapacity( b2IdPool* pool )
 static inline int b2GetIdBytes( b2IdPool* pool )
 {
 	return b2Array_ByteCount( pool->freeArray );
+}
+
+/// Box2D-Packed: number of ids that can still be allocated before a one-based index would
+/// exceed the 16-bit handle range. Use for pools whose ids are exposed as 4-byte handles
+/// (bodies, shapes, chains, joints).
+static inline int b2GetHandleRoom( b2IdPool* pool )
+{
+	return pool->freeArray.count + ( B2_MAX_HANDLE_INDEX1 - pool->nextIndex );
 }
