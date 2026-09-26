@@ -235,8 +235,92 @@ static int StepUntilSleep( b2WorldId worldId )
 	return maxSteps;
 }
 
+// Box2D-Packed is single-world, so a restored world cannot run side by side with its origin.
+// Instead the origin's per-step hashes are recorded, the origin is destroyed, and the restored
+// world is checked against the recording. This is the same determinism guarantee as a lockstep.
+typedef struct HashTrail
+{
+	uint64_t shallow[120];
+	uint64_t deep[120];
+	int count;
+} HashTrail;
+
+static void RecordTrail( b2WorldId worldId, HashTrail* trail, int steps, bool withDeep )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	trail->count = steps;
+	for ( int step = 0; step < steps; ++step )
+	{
+		b2World_Step( worldId, 1.0f / 60.0f, 4 );
+		trail->shallow[step] = b2HashWorldState( world );
+		trail->deep[step] = withDeep ? b2HashWorldStateDeep( world ) : 0;
+	}
+}
+
+static bool MatchTrail( b2WorldId worldId, const HashTrail* trail, bool withDeep, const char* label )
+{
+	b2World* world = b2GetWorldFromId( worldId );
+	for ( int step = 0; step < trail->count; ++step )
+	{
+		b2World_Step( worldId, 1.0f / 60.0f, 4 );
+		uint64_t s = b2HashWorldState( world );
+		if ( s != trail->shallow[step] )
+		{
+			printf( "%s: shallow hash mismatch at step %d (expected=%llu got=%llu)\n", label, step,
+					(unsigned long long)trail->shallow[step], (unsigned long long)s );
+			return false;
+		}
+
+		if ( withDeep )
+		{
+			uint64_t d = b2HashWorldStateDeep( world );
+			if ( d != trail->deep[step] )
+			{
+				printf( "%s: deep hash mismatch at step %d (expected=%llu got=%llu)\n", label, step,
+						(unsigned long long)trail->deep[step], (unsigned long long)d );
+				return false;
+			}
+		}
+	}
+	return true;
+}
+
+// Free pairs are chained through the parent index of their first node. A broken restore shows up
+// here and not in the hashes, which never read tree nodes. Captured so it can be compared after the
+// origin world is gone.
+#define MAX_FREE_PAIRS 1024
+typedef struct TreeFreeImage
+{
+	int nodeEnd;
+	int pairFreeList;
+	int pairCount;
+	int parents[2 * MAX_FREE_PAIRS];
+} TreeFreeImage;
+
+static void CaptureTreeFree( b2World* world, TreeFreeImage images[b2_bodyTypeCount] )
+{
+	for ( int treeType = 0; treeType < b2_bodyTypeCount; ++treeType )
+	{
+		const b2DynamicTree* tree = world->broadPhase.trees + treeType;
+		TreeFreeImage* img = images + treeType;
+		img->nodeEnd = tree->nodeEnd;
+		img->pairFreeList = tree->pairFreeList;
+		img->pairCount = 0;
+		for ( int pair = tree->pairFreeList; pair != B2_NULL_INDEX && img->pairCount < MAX_FREE_PAIRS;
+			  pair = tree->parents[pair] )
+		{
+			img->parents[2 * img->pairCount + 0] = tree->parents[pair];
+			img->parents[2 * img->pairCount + 1] = tree->parents[pair + 1];
+			img->pairCount += 1;
+		}
+	}
+}
+
 int SnapshotTest( void )
 {
+	float dt = 1.0f / 60.0f;
+	int subSteps = 4;
+
 	// Phase 1: build and settle worldA
 	b2WorldId worldAId = BuildScene( 1, NULL );
 	StepUntilSleep( worldAId );
@@ -254,94 +338,67 @@ int SnapshotTest( void )
 	b2SerializeWorld( worldA, &buf );
 	ENSURE( buf.size > 0 );
 
+	// Capture everything worldB will be compared against
+	uint64_t hashA0 = b2HashWorldState( worldA );
+	uint64_t deepA0 = b2HashWorldStateDeep( worldA );
+	static TreeFreeImage treeImagesA[b2_bodyTypeCount];
+	CaptureTreeFree( worldA, treeImagesA );
+
+	static HashTrail trailA;
+	RecordTrail( worldAId, &trailA, 120, true );
+
+	// Serialize worldA after the trail for phase 4
+	b2RecBuffer buf2 = { 0 };
+	b2SerializeWorld( worldA, &buf2 );
+	ENSURE( buf2.size > 0 );
+
+	b2DestroyWorld( worldAId );
+	ENSURE( b2World_IsValid( worldAId ) == false );
+
 	// Phase 2: deserialize into worldB (same worker count)
 	b2WorldId worldBId = b2CreateWorldFromSnapshot( buf.data, buf.size, 1 );
 	ENSURE( b2World_IsValid( worldBId ) );
 
 	b2World* worldB = b2GetWorldFromId( worldBId );
 
-	// Immediate hash check — A and B must be identical
-	uint64_t hashA0 = b2HashWorldState( worldA );
-	uint64_t hashB0 = b2HashWorldState( worldB );
-	ENSURE( hashA0 == hashB0 );
+	// Immediate hash check — B must be identical to A at the snapshot instant
+	ENSURE( b2HashWorldState( worldB ) == hashA0 );
+	ENSURE( b2HashWorldStateDeep( worldB ) == deepA0 );
 
-	uint64_t deepA0 = b2HashWorldStateDeep( worldA );
-	uint64_t deepB0 = b2HashWorldStateDeep( worldB );
-	ENSURE( deepA0 == deepB0 );
-
-	// Free pairs are chained through the parent index of their first node, so a broken
-	// restore shows up here and not in the hashes, which never read tree nodes
-	for ( int treeType = 0; treeType < b2_bodyTypeCount; ++treeType )
 	{
-		const b2DynamicTree* treeA = worldA->broadPhase.trees + treeType;
-		const b2DynamicTree* treeB = worldB->broadPhase.trees + treeType;
-		ENSURE( treeA->nodeEnd == treeB->nodeEnd );
-		ENSURE( treeA->pairFreeList == treeB->pairFreeList );
-
-		for ( int pair = treeA->pairFreeList; pair != B2_NULL_INDEX; pair = treeA->parents[pair] )
+		static TreeFreeImage treeImagesB[b2_bodyTypeCount];
+		CaptureTreeFree( worldB, treeImagesB );
+		for ( int treeType = 0; treeType < b2_bodyTypeCount; ++treeType )
 		{
-			ENSURE( treeA->parents[pair] == treeB->parents[pair] );
-			ENSURE( treeA->parents[pair + 1] == treeB->parents[pair + 1] );
+			const TreeFreeImage* a = treeImagesA + treeType;
+			const TreeFreeImage* b = treeImagesB + treeType;
+			ENSURE( a->nodeEnd == b->nodeEnd );
+			ENSURE( a->pairFreeList == b->pairFreeList );
+			ENSURE( a->pairCount == b->pairCount );
+			ENSURE( memcmp( a->parents, b->parents, sizeof( int ) * 2 * a->pairCount ) == 0 );
 		}
 	}
 
-	// Phase 3: lockstep worldA vs worldB for 120 steps, assert both hashes match each step
-	float dt = 1.0f / 60.0f;
-	int subSteps = 4;
-	for ( int step = 0; step < 120; ++step )
-	{
-		b2World_Step( worldAId, dt, subSteps );
-		b2World_Step( worldBId, dt, subSteps );
+	// Phase 3: worldB must reproduce worldA's recorded trail for 120 steps
+	ENSURE( MatchTrail( worldBId, &trailA, true, "snapshot vs origin" ) );
+	b2DestroyWorld( worldBId );
 
-		uint64_t sA = b2HashWorldState( worldA );
-		uint64_t sB = b2HashWorldState( worldB );
-		if ( sA != sB )
-		{
-			printf( "shallow hash mismatch at lockstep step %d (A=%llu B=%llu)\n", step, (unsigned long long)sA,
-					(unsigned long long)sB );
-			ENSURE( false );
-		}
-
-		uint64_t dA = b2HashWorldStateDeep( worldA );
-		uint64_t dB = b2HashWorldStateDeep( worldB );
-		if ( dA != dB )
-		{
-			printf( "deep hash mismatch at lockstep step %d (A=%llu B=%llu)\n", step, (unsigned long long)dA,
-					(unsigned long long)dB );
-			ENSURE( false );
-		}
-	}
-
-	// Phase 4: restore is worker-count independent. Snapshot worldA at its current state,
-	// rebuild it at one and four workers from the same bytes, then lockstep the two.
-	b2RecBufFree( &buf );
-	buf = (b2RecBuffer){ 0 };
-	b2SerializeWorld( worldA, &buf );
-
-	b2WorldId worldA1Id = b2CreateWorldFromSnapshot( buf.data, buf.size, 1 );
+	// Phase 4: restore is worker-count independent. Rebuild worldA's later state at one worker,
+	// record its trail, then rebuild the same bytes at four workers and match the trail.
+	b2WorldId worldA1Id = b2CreateWorldFromSnapshot( buf2.data, buf2.size, 1 );
 	ENSURE( b2World_IsValid( worldA1Id ) );
-	b2World* worldA1 = b2GetWorldFromId( worldA1Id );
+	uint64_t hashA1 = b2HashWorldState( b2GetWorldFromId( worldA1Id ) );
+	static HashTrail trailA1;
+	RecordTrail( worldA1Id, &trailA1, 120, false );
+	b2DestroyWorld( worldA1Id );
 
-	b2WorldId worldCId = b2CreateWorldFromSnapshot( buf.data, buf.size, 4 );
+	b2WorldId worldCId = b2CreateWorldFromSnapshot( buf2.data, buf2.size, 4 );
 	ENSURE( b2World_IsValid( worldCId ) );
-	b2World* worldC = b2GetWorldFromId( worldCId );
+	ENSURE( b2HashWorldState( b2GetWorldFromId( worldCId ) ) == hashA1 );
+	ENSURE( MatchTrail( worldCId, &trailA1, false, "one vs four workers" ) );
+	b2DestroyWorld( worldCId );
 
-	ENSURE( b2HashWorldState( worldA1 ) == b2HashWorldState( worldC ) );
-
-	for ( int step = 0; step < 120; ++step )
-	{
-		b2World_Step( worldA1Id, dt, subSteps );
-		b2World_Step( worldCId, dt, subSteps );
-
-		uint64_t sA1 = b2HashWorldState( worldA1 );
-		uint64_t sC = b2HashWorldState( worldC );
-		if ( sA1 != sC )
-		{
-			printf( "one vs four worker hash mismatch at step %d (1w=%llu 4w=%llu)\n", step, (unsigned long long)sA1,
-					(unsigned long long)sC );
-			ENSURE( false );
-		}
-	}
+	b2RecBufFree( &buf2 );
 
 	// Phase 5: in-place restore keeps held ids working and rolls the world back exactly
 	SnapshotIds ids;
@@ -431,29 +488,25 @@ int SnapshotTest( void )
 	}
 	ENSURE( b2HashWorldStateDeep( rWorld ) == snapHash );
 
-	// Phase 7: restore is worker-count independent. Restore the one-worker image into a
-	// four-worker world and lockstep it against the same image loaded fresh at one worker.
+	// Done with the in-place world; Box2D-Packed can only hold one world at a time
+	b2DestroyWorld( rId );
+
+	// Phase 7: restore is worker-count independent. Load the one-worker image fresh at one
+	// worker and record its trail, then restore it in place into a four-worker world and match.
+	b2WorldId freshId = b2CreateWorldFromSnapshot( image, imageSize, 1 );
+	ENSURE( b2World_IsValid( freshId ) );
+	uint64_t freshHash = b2HashWorldState( b2GetWorldFromId( freshId ) );
+	static HashTrail trailFresh;
+	RecordTrail( freshId, &trailFresh, 120, false );
+	b2DestroyWorld( freshId );
+
 	b2WorldDef def4 = b2DefaultWorldDef();
 	def4.workerCount = 4;
 	b2WorldId sId = b2CreateWorld( &def4 );
 	ENSURE( b2World_Restore( sId, image, imageSize ) );
-	b2World* sWorld = b2GetWorldFromId( sId );
-
-	b2WorldId freshId = b2CreateWorldFromSnapshot( image, imageSize, 1 );
-	ENSURE( b2World_IsValid( freshId ) );
-	b2World* freshWorld = b2GetWorldFromId( freshId );
-
-	ENSURE( b2HashWorldState( sWorld ) == b2HashWorldState( freshWorld ) );
-	for ( int step = 0; step < 120; ++step )
-	{
-		b2World_Step( sId, dt, subSteps );
-		b2World_Step( freshId, dt, subSteps );
-		if ( b2HashWorldState( sWorld ) != b2HashWorldState( freshWorld ) )
-		{
-			printf( "in-place vs fresh hash mismatch at step %d\n", step );
-			ENSURE( false );
-		}
-	}
+	ENSURE( b2HashWorldState( b2GetWorldFromId( sId ) ) == freshHash );
+	ENSURE( MatchTrail( sId, &trailFresh, false, "in-place vs fresh" ) );
+	b2DestroyWorld( sId );
 
 	b2Free( image, imageSize );
 
@@ -548,6 +601,8 @@ int SnapshotTest( void )
 			realTail[step] = b2HashWorldState( origin );
 		}
 
+		b2DestroyWorld( wId );
+
 		b2WorldId cId = b2CreateWorldFromSnapshot( snap, snapSize, 1 );
 		ENSURE( b2World_IsValid( cId ) );
 		b2World* clone = b2GetWorldFromId( cId );
@@ -562,7 +617,6 @@ int SnapshotTest( void )
 		}
 
 		b2Free( snap, snapSize );
-		b2DestroyWorld( wId );
 		b2DestroyWorld( cId );
 	}
 
@@ -666,15 +720,7 @@ int SnapshotTest( void )
 
 	remove( s_snapPath );
 
-	// Clean up
-	b2DestroyWorld( worldAId );
-	b2DestroyWorld( worldBId );
-	b2DestroyWorld( worldA1Id );
-	b2DestroyWorld( worldCId );
-	b2DestroyWorld( rId );
-	b2DestroyWorld( sId );
-	b2DestroyWorld( freshId );
-
+	// Clean up. Every world was destroyed at the end of its phase.
 	b2RecBufFree( &buf );
 
 	return 0;

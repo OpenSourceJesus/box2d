@@ -469,6 +469,87 @@ static int RecordReplayTest( void )
 	return 0;
 }
 
+// Box2D-Packed: body, shape, chain, and joint handles use a 16-bit index, so each world holds at
+// most B2_MAX_HANDLE_INDEX1 live objects of each kind. Creation beyond that is rejected with a
+// null id rather than wrapping the index onto an existing object.
+static int HandleLimitFill( void )
+{
+	b2WorldDef worldDef = b2DefaultWorldDef();
+	b2WorldId worldId = b2CreateWorld( &worldDef );
+
+	// Keep the bodies so shapes can be spread across them. Many shapes on one body is quadratic.
+	static b2BodyId bodyIds[B2_MAX_HANDLE_INDEX1];
+
+	b2BodyDef bodyDef = b2DefaultBodyDef();
+	for ( int i = 0; i < B2_MAX_HANDLE_INDEX1; ++i )
+	{
+		bodyIds[i] = b2CreateBody( worldId, &bodyDef );
+		ENSURE( B2_IS_NON_NULL( bodyIds[i] ) );
+	}
+	b2BodyId firstBody = bodyIds[0];
+
+	BeginRejectCount();
+	b2BodyId overflowBody = b2_nullBodyId;
+	REJECTS( overflowBody = b2CreateBody( worldId, &bodyDef ) );
+	EndRejectCount();
+	ENSURE( B2_IS_NULL( overflowBody ) );
+
+	// Freeing a slot makes room again, and the recycled handle does not alias the old one
+	b2DestroyBody( firstBody );
+	b2BodyId recycled = b2CreateBody( worldId, &bodyDef );
+	ENSURE( B2_IS_NON_NULL( recycled ) );
+	bodyIds[0] = recycled;
+	ENSURE( B2_ID_EQUALS( recycled, firstBody ) == false );
+	ENSURE( b2Body_IsValid( firstBody ) == false );
+
+	// Shapes: fill to the limit, one per body. Static shapes skip contact creation.
+	b2ShapeDef shapeDef = b2DefaultShapeDef();
+	b2Circle circle = { { 0.0f, 0.0f }, 0.1f };
+	for ( int i = 0; i < B2_MAX_HANDLE_INDEX1 - 2; ++i )
+	{
+		b2ShapeId shapeId = b2CreateCircleShape( bodyIds[i], &shapeDef, &circle );
+		ENSURE( B2_IS_NON_NULL( shapeId ) );
+	}
+
+	// Two shape slots remain, so a three-segment loop chain must be rejected up front
+	b2Vec2 points[3] = { { 0.0f, 0.0f }, { 1.0f, 0.0f }, { 0.0f, 1.0f } };
+	b2ChainDef chainDef = b2DefaultChainDef();
+	chainDef.points = points;
+	chainDef.pointCount = 3;
+	chainDef.isLoop = true;
+
+	BeginRejectCount();
+	b2ChainId overflowChain = b2_nullChainId;
+	REJECTS( overflowChain = b2CreateChain( recycled, &chainDef ) );
+	EndRejectCount();
+	ENSURE( B2_IS_NULL( overflowChain ) );
+
+	ENSURE( B2_IS_NON_NULL( b2CreateCircleShape( recycled, &shapeDef, &circle ) ) );
+	ENSURE( B2_IS_NON_NULL( b2CreateCircleShape( recycled, &shapeDef, &circle ) ) );
+
+	BeginRejectCount();
+	b2ShapeId overflowShape = b2_nullShapeId;
+	REJECTS( overflowShape = b2CreateCircleShape( recycled, &shapeDef, &circle ) );
+	EndRejectCount();
+	ENSURE( B2_IS_NULL( overflowShape ) );
+
+	b2DestroyWorld( worldId );
+	return 0;
+}
+
+static int HandleLimitTest( void )
+{
+#if defined( NDEBUG )
+	return HandleLimitFill();
+#else
+	// Debug builds run heavy world validation on every create, which makes filling 64k handles
+	// take minutes. The guard logic is identical in release, where this runs in milliseconds.
+	(void)HandleLimitFill;
+	printf( "    HandleLimitTest skipped in debug builds\n" );
+	return 0;
+#endif
+}
+
 int InvalidInputTest( void )
 {
 	RUN_SUBTEST( WorldInputTest );
@@ -477,6 +558,7 @@ int InvalidInputTest( void )
 	RUN_SUBTEST( JointInputTest );
 	RUN_SUBTEST( CreateInputTest );
 	RUN_SUBTEST( RecordReplayTest );
+	RUN_SUBTEST( HandleLimitTest );
 
 	return 0;
 }

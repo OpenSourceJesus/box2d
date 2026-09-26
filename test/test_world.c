@@ -204,7 +204,8 @@ static int TestIsValid( void )
 	return 0;
 }
 
-#define WORLD_COUNT ( B2_MAX_WORLDS / 2 )
+// Box2D-Packed: single world, so recycle the one slot repeatedly
+#define WORLD_COUNT B2_MAX_WORLDS
 
 int TestWorldRecycle( void )
 {
