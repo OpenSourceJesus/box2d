@@ -115,7 +115,10 @@
 #define B2_UNUSED( ... ) (void)sizeof(( __VA_ARGS__, 0 ))
 
 // Use to validate definitions. Do not take my cookie.
-#define B2_SECRET_COOKIE 1152023
+// Box2D-Packed: internalValue is uint16_t, so the cookie must fit in 16 bits. Kept away from
+// 0x0000/0xFFFF and small values so zeroed or memset defs are still rejected.
+#define B2_SECRET_COOKIE 0xB2D5u
+_Static_assert( B2_SECRET_COOKIE <= 0xFFFFu, "B2_SECRET_COOKIE must fit in uint16_t internalValue" );
 
 // Snoop counters. These should be disabled in optimized builds because they are expensive.
 #if defined( box2d_EXPORTS )
