@@ -35,8 +35,7 @@
 #include <stdio.h>
 #include <string.h>
 
-_Static_assert( B2_MAX_WORLDS > 0, "must be 1 or more" );
-_Static_assert( B2_MAX_WORLDS < UINT16_MAX, "B2_MAX_WORLDS limit exceeded" );
+_Static_assert( B2_MAX_WORLDS == 1, "Box2D-Packed is single-world" );
 static b2World b2_worlds[B2_MAX_WORLDS];
 
 static b2World* b2GetUnlockedWorldFromId( b2WorldId id )
@@ -64,19 +63,17 @@ b2World* b2GetWorldFromId( b2WorldId id )
 	return world;
 }
 
-b2World* b2GetWorld( int index )
+b2World* b2GetWorld( void )
 {
-	B2_ASSERT( 0 <= index && index < B2_MAX_WORLDS );
-	b2World* world = b2_worlds + index;
-	B2_ASSERT( world->worldId == index );
+	b2World* world = b2_worlds;
+	B2_ASSERT( world->inUse );
 	return world;
 }
 
-b2World* b2GetWorldLocked( int index )
+b2World* b2GetWorldLocked( void )
 {
-	B2_ASSERT( 0 <= index && index < B2_MAX_WORLDS );
-	b2World* world = b2_worlds + index;
-	B2_ASSERT( world->worldId == index );
+	b2World* world = b2_worlds;
+	B2_ASSERT( world->inUse );
 	if ( world->locked )
 	{
 		B2_ASSERT( false );
@@ -747,7 +744,6 @@ static void b2Collide( b2StepContext* context )
 	int endEventArrayIndex = world->endEventArrayIndex;
 
 	const b2Shape* shapes = world->shapes.data;
-	uint16_t worldId = world->worldId;
 
 	// Process contact state changes. Iterate over set bits
 	for ( uint32_t k = 0; k < bitSet->blockCount; ++k )
@@ -795,12 +791,10 @@ static void b2Collide( b2StepContext* context )
 				{
 					const b2Shape* shapeA = shapes + contact->shapeIdA;
 					const b2Shape* shapeB = shapes + contact->shapeIdB;
-					b2ShapeId shapeIdA = { shapeA->id + 1, worldId, shapeA->generation };
-					b2ShapeId shapeIdB = { shapeB->id + 1, worldId, shapeB->generation };
+					b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+					b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 					b2ContactId contactFullId = {
 						.index1 = contactId + 1,
-						.world0 = worldId,
-						.padding = 0,
 						.generation = contact->generation,
 					};
 
@@ -843,12 +837,10 @@ static void b2Collide( b2StepContext* context )
 				{
 					const b2Shape* shapeA = shapes + contact->shapeIdA;
 					const b2Shape* shapeB = shapes + contact->shapeIdB;
-					b2ShapeId shapeIdA = { shapeA->id + 1, worldId, shapeA->generation };
-					b2ShapeId shapeIdB = { shapeB->id + 1, worldId, shapeB->generation };
+					b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+					b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 					b2ContactId contactFullId = {
 						.index1 = contactId + 1,
-						.world0 = worldId,
-						.padding = 0,
 						.generation = contact->generation,
 					};
 
@@ -1564,7 +1556,7 @@ bool b2World_IsValid( b2WorldId id )
 
 	b2World* world = b2_worlds + ( id.index1 - 1 );
 
-	if ( world->worldId != id.index1 - 1 )
+	if ( world->inUse == false )
 	{
 		// world is not allocated
 		return false;
@@ -1575,14 +1567,8 @@ bool b2World_IsValid( b2WorldId id )
 
 bool b2Body_IsValid( b2BodyId id )
 {
-	if ( B2_MAX_WORLDS <= id.world0 )
-	{
-		// invalid world
-		return false;
-	}
-
-	b2World* world = b2_worlds + id.world0;
-	if ( world->worldId != id.world0 )
+	b2World* world = b2_worlds;
+	if ( world->inUse == false )
 	{
 		// world is free
 		return false;
@@ -1614,13 +1600,8 @@ bool b2Body_IsValid( b2BodyId id )
 
 bool b2Shape_IsValid( b2ShapeId id )
 {
-	if ( B2_MAX_WORLDS <= id.world0 )
-	{
-		return false;
-	}
-
-	b2World* world = b2_worlds + id.world0;
-	if ( world->worldId != id.world0 )
+	b2World* world = b2_worlds;
+	if ( world->inUse == false )
 	{
 		// world is free
 		return false;
@@ -1646,13 +1627,8 @@ bool b2Shape_IsValid( b2ShapeId id )
 
 bool b2Chain_IsValid( b2ChainId id )
 {
-	if ( B2_MAX_WORLDS <= id.world0 )
-	{
-		return false;
-	}
-
-	b2World* world = b2_worlds + id.world0;
-	if ( world->worldId != id.world0 )
+	b2World* world = b2_worlds;
+	if ( world->inUse == false )
 	{
 		// world is free
 		return false;
@@ -1678,13 +1654,8 @@ bool b2Chain_IsValid( b2ChainId id )
 
 bool b2Joint_IsValid( b2JointId id )
 {
-	if ( B2_MAX_WORLDS <= id.world0 )
-	{
-		return false;
-	}
-
-	b2World* world = b2_worlds + id.world0;
-	if ( world->worldId != id.world0 )
+	b2World* world = b2_worlds;
+	if ( world->inUse == false )
 	{
 		// world is free
 		return false;
@@ -1710,13 +1681,8 @@ bool b2Joint_IsValid( b2JointId id )
 
 bool b2Contact_IsValid( b2ContactId id )
 {
-	if ( B2_MAX_WORLDS <= id.world0 )
-	{
-		return false;
-	}
-
-	b2World* world = b2_worlds + id.world0;
-	if ( world->worldId != id.world0 )
+	b2World* world = b2_worlds;
+	if ( world->inUse == false )
 	{
 		// world is free
 		return false;
@@ -2373,7 +2339,7 @@ static bool TreeQueryCallback( int proxyId, uint64_t userData, void* context )
 		return true;
 	}
 
-	b2ShapeId id = { shapeId + 1, world->worldId, shape->generation };
+	b2ShapeId id = { (uint16_t)( shapeId + 1 ), shape->generation };
 	bool result = worldContext->fcn( id, worldContext->userContext );
 	return result;
 }
@@ -2476,7 +2442,7 @@ static bool TreeOverlapCallback( int proxyId, uint64_t userData, void* context )
 		return true;
 	}
 
-	b2ShapeId id = { shape->id + 1, world->worldId, shape->generation };
+	b2ShapeId id = { (uint16_t)( shape->id + 1 ), shape->generation };
 	bool result = worldContext->fcn( id, worldContext->userContext );
 	return result;
 }
@@ -2570,7 +2536,7 @@ static float RayCastCallback( const b2RayCastInput* input, int proxyId, uint64_t
 
 	if ( output.hit )
 	{
-		b2ShapeId id = { shapeId + 1, world->worldId, shape->generation };
+		b2ShapeId id = { (uint16_t)( shapeId + 1 ), shape->generation };
 		b2Pos point = b2OffsetPos( worldContext->origin, output.point );
 		float fraction = worldContext->fcn( id, point, output.normal, output.fraction, worldContext->userContext );
 
@@ -2753,7 +2719,7 @@ static float ShapeCastCallback( const b2BoxCastInput* input, int proxyId, uint64
 
 	if ( output.hit )
 	{
-		b2ShapeId id = { shapeId + 1, world->worldId, shape->generation };
+		b2ShapeId id = { (uint16_t)( shapeId + 1 ), shape->generation };
 
 		b2Pos point = b2OffsetPos( worldContext->origin, output.point );
 		float fraction = worldContext->fcn( id, point, output.normal, output.fraction, worldContext->userContext );
@@ -2978,7 +2944,7 @@ static bool TreeCollideCallback( int proxyId, uint64_t userData, void* context )
 	// todo handle deep overlap
 	if ( result.hit && b2IsNormalized( result.plane.normal ) )
 	{
-		b2ShapeId id = { shape->id + 1, world->worldId, shape->generation };
+		b2ShapeId id = { (uint16_t)( shape->id + 1 ), shape->generation };
 		return worldContext->fcn( id, &result, worldContext->userContext );
 	}
 

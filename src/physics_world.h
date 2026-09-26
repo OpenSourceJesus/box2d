@@ -225,8 +225,8 @@ typedef struct b2World
 } b2World;
 
 b2World* b2GetWorldFromId( b2WorldId id );
-b2World* b2GetWorld( int index );
-b2World* b2GetWorldLocked( int index );
+b2World* b2GetWorld( void );
+b2World* b2GetWorldLocked( void );
 
 // Union of the broad-phase root bounds across all body types. Returns false when no tree holds a
 // proxy, so callers don't fold an empty world's origin into a running bounds.
