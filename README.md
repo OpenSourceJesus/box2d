@@ -150,7 +150,13 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 | b2PrismaticJointDef / b2RevoluteJointDef | 120 | **104** |
 | b2WheelJointDef | 112 | **104** |
 | b2MotionLocks | 3 | **1** |
-| b2Shape (internal) | 280 | **264** |
+| b2Shape (internal) | 280 | **256** |
+| b2TreeProxy (internal) | 24 | **16** |
+
+### Hot-path layout
+
+- **Tree category bits live in the leaf node.** `b2TreeNode` has 8 bytes that 2D never used (3D uses them for AABB z). Leaf category bits now go there. Queries, ray casts, and box casts test the mask on the node they already loaded, and only leaves that pass read the proxy array. `b2TreeProxy` shrinks from 24 to 16 bytes.
+- **`b2Shape` hot cache line.** Every field the broad-phase pair filter reads (`bodyId`, `sensorIndex`, `type`, `filter`, `generation`, and the flags) is in the first 64 bytes. It used to touch three cache lines per shape, and now touches one. The flags are bit-fields, and the struct is exactly 256 bytes, four cache lines in the 64-byte aligned shape array.
 
 ### Limits
 
@@ -158,7 +164,7 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 - **65535 live bodies, shapes, chains, and joints per world**, each counted separately. Creating one more logs an error and returns a null id instead of wrapping onto an existing object. A chain is rejected up front if its segments would not all fit.
 - **16 collision categories.** `B2_DEFAULT_MASK_BITS` is `0xFFFF`. `groupIndex` is `int16_t`.
 - `b2RayResult` visit counts are `uint16_t` and saturate at 65535.
-- The recording format is 4.1. Older `.b2rec` files will not load.
+- The recording format is 4.2 and the snapshot version is 13. Older `.b2rec` files and snapshots will not load.
 - The standalone `b2DynamicTree` API keeps 64-bit category and mask bits for non-physics use.
 
 ### Benchmark: Box2D v3 vs Box2D-Packed
