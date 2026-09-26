@@ -150,13 +150,33 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 | b2PrismaticJointDef / b2RevoluteJointDef | 120 | **104** |
 | b2WheelJointDef | 112 | **104** |
 | b2MotionLocks | 3 | **1** |
-| b2Shape (internal) | 280 | **256** |
+| b2Shape (internal) | 280 | **264** |
 | b2TreeProxy (internal) | 24 | **16** |
 
 ### Hot-path layout
 
 - **Tree category bits live in the leaf node.** `b2TreeNode` has 8 bytes that 2D never used (3D uses them for AABB z). Leaf category bits now go there. Queries, ray casts, and box casts test the mask on the node they already loaded, and only leaves that pass read the proxy array. `b2TreeProxy` shrinks from 24 to 16 bytes.
-- **`b2Shape` hot cache line.** Every field the broad-phase pair filter reads (`bodyId`, `sensorIndex`, `type`, `filter`, `generation`, and the flags) is in the first 64 bytes. It used to touch three cache lines per shape, and now touches one. The flags are bit-fields, and the struct is exactly 256 bytes, four cache lines in the 64-byte aligned shape array.
+- **`b2Shape` hot cache line.** Every field the broad-phase pair filter reads (`bodyId`, `sensorIndex`, `type`, `filter`, `generation`, and the flags) is in the first 64 bytes. It used to touch three cache lines per shape, and now touches one. `aabb` starts cache line 1.
+- **No power-of-two stride.** `b2Shape` is 264 bytes, not 256. We measured a 256-byte version: the same field of every shape mapped to a quarter of the cache sets, and `large_pyramid` last-level data misses rose 27%. At 264 bytes each shape shifts by 8 bytes, and fields spread across all sets.
+
+### Cachegrind: cache misses vs Box2D v3
+
+Cachegrind simulates the cache, so these counts are exact and repeat identically run to run. Timing on shared hardware could not resolve differences this small.
+
+Setup:
+- Simulated caches: 32 KB 8-way L1, 8 MB 16-way last level, 64-byte lines.
+- One worker, identical scenes, `-O3`.
+- "Data misses" counts reads and writes.
+
+| Benchmark | Instructions | L1 data misses | Last-level data misses |
+| :---- | ----: | ----: | ----: |
+| tile_world | -0.1% | -25.0% | **-65.3%** |
+| queries | +0.2% | -7.0% | **-60.4%** |
+| tree_cast | -0.4% | -2.9% | **-7.3%** |
+| smash | +0.2% | -0.1% | **-5.8%** |
+| large_pyramid | +0.3% | -0.3% | **-6.6%** |
+
+Negative is better. The biggest wins are in query-heavy scenes: filtered-out leaves no longer read the proxy array, and query callbacks read one shape cache line instead of three. `tree_cast` does not touch shapes, so its change comes from the tree node layout alone. The instruction count is essentially unchanged, so the savings are memory traffic, which matters more on real hardware with larger worlds and more threads.
 
 ### Limits
 
@@ -167,7 +187,9 @@ Everything below is implemented, and all 24 unit test groups pass in Release and
 - The recording format is 4.2 and the snapshot version is 13. Older `.b2rec` files and snapshots will not load.
 - The standalone `b2DynamicTree` API keeps 64-bit category and mask bits for non-physics use.
 
-### Benchmark: Box2D v3 vs Box2D-Packed
+### Benchmark: Box2D v3 vs Box2D-Packed (timing, before the hot-path layout changes)
+
+This table was measured after the handle, def, and filter packing, before the tree node and `b2Shape` changes above. For those changes, see the Cachegrind results.
 
 Setup:
 - Upstream is commit `956ce4e`. Both builds use the same compiler and flags (`-O3 -DNDEBUG`, AVX2 off) and the same scenes.
