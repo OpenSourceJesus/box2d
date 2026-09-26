@@ -1220,6 +1220,115 @@ static int TreeStaleAfterInsertRemoveTest( void )
 	return 0;
 }
 
+// Box2D-Packed: category bits live in the leaf node instead of the proxy. Nodes are copied
+// around by insert, remove, rotation, and rebuild, so check the category travels with its leaf
+// and that masked queries still see exactly the right proxies after every kind of churn.
+#define CATEGORY_PROXY_COUNT 256
+
+static uint64_t CategoryFor( int i )
+{
+	// Include a bit above 32 to prove the full 64-bit tree category survives
+	return ( i % 5 == 4 ) ? ( 1ull << 40 ) : ( 1ull << ( i % 4 ) );
+}
+
+static bool CountCallback( int proxyId, uint64_t userData, void* context )
+{
+	(void)proxyId;
+	(void)userData;
+	*(int*)context += 1;
+	return true;
+}
+
+static int CheckCategories( b2DynamicTree* tree, const int* proxyIds, const uint64_t* categories, const bool* alive )
+{
+	b2AABB everything = { { -1000.0f, -1000.0f }, { 1000.0f, 1000.0f } };
+	uint64_t masks[] = { 1, 2, 4, 8, 1ull << 40, 3, B2_DEFAULT_MASK_BITS, UINT64_MAX };
+
+	for ( int m = 0; m < (int)( sizeof( masks ) / sizeof( masks[0] ) ); ++m )
+	{
+		int expected = 0;
+		for ( int i = 0; i < CATEGORY_PROXY_COUNT; ++i )
+		{
+			if ( alive[i] && ( categories[i] & masks[m] ) != 0 )
+			{
+				expected += 1;
+			}
+		}
+
+		int count = 0;
+		b2DynamicTree_Query( tree, everything, masks[m], CountCallback, &count );
+		ENSURE( count == expected );
+	}
+
+	for ( int i = 0; i < CATEGORY_PROXY_COUNT; ++i )
+	{
+		if ( alive[i] )
+		{
+			ENSURE( b2DynamicTree_GetCategoryBits( tree, proxyIds[i] ) == categories[i] );
+		}
+	}
+
+	b2DynamicTree_Validate( tree );
+	return 0;
+}
+
+static int TreeCategoryInNodeTest( void )
+{
+	ENSURE( sizeof( b2TreeNode ) == 32 );
+	ENSURE( sizeof( b2TreeProxy ) == 16 );
+
+	b2DynamicTree tree = b2CreateDynamicTree( 16 );
+	int proxyIds[CATEGORY_PROXY_COUNT];
+	uint64_t categories[CATEGORY_PROXY_COUNT];
+	bool alive[CATEGORY_PROXY_COUNT];
+
+	for ( int i = 0; i < CATEGORY_PROXY_COUNT; ++i )
+	{
+		categories[i] = CategoryFor( i );
+		proxyIds[i] = b2CreateTreeProxy( &tree, RandomTreeBox( 2.0f ), categories[i], (uint64_t)i );
+		alive[i] = true;
+	}
+	ENSURE( CheckCategories( &tree, proxyIds, categories, alive ) == 0 );
+
+	// Move every proxy: remove and reinsert through the move path
+	for ( int i = 0; i < CATEGORY_PROXY_COUNT; ++i )
+	{
+		b2DynamicTree_MoveProxy( &tree, proxyIds[i], RandomTreeBox( 2.0f ) );
+	}
+	ENSURE( CheckCategories( &tree, proxyIds, categories, alive ) == 0 );
+
+	// Change some categories in place
+	for ( int i = 0; i < CATEGORY_PROXY_COUNT; i += 3 )
+	{
+		categories[i] = 8;
+		b2DynamicTree_SetCategoryBits( &tree, proxyIds[i], categories[i] );
+	}
+	ENSURE( CheckCategories( &tree, proxyIds, categories, alive ) == 0 );
+
+	// Destroy some so freed pairs get reused by later inserts
+	for ( int i = 0; i < CATEGORY_PROXY_COUNT; i += 7 )
+	{
+		b2DestroyTreeProxy( &tree, proxyIds[i] );
+		alive[i] = false;
+	}
+	ENSURE( CheckCategories( &tree, proxyIds, categories, alive ) == 0 );
+
+	for ( int i = 0; i < CATEGORY_PROXY_COUNT; i += 7 )
+	{
+		categories[i] = CategoryFor( i + 1 );
+		proxyIds[i] = b2CreateTreeProxy( &tree, RandomTreeBox( 2.0f ), categories[i], (uint64_t)i );
+		alive[i] = true;
+	}
+	ENSURE( CheckCategories( &tree, proxyIds, categories, alive ) == 0 );
+
+	// Rebuild relocates every node
+	b2DynamicTree_Rebuild( &tree, true );
+	ENSURE( CheckCategories( &tree, proxyIds, categories, alive ) == 0 );
+
+	b2DestroyDynamicTree( &tree );
+	return 0;
+}
+
 int DynamicTreeTest( void )
 {
 	RUN_SUBTEST( TreeCreateDestroy );
@@ -1238,6 +1347,7 @@ int DynamicTreeTest( void )
 	RUN_SUBTEST( TreeMarkAndRefitTest );
 	RUN_SUBTEST( TreeDfsOrderTest );
 	RUN_SUBTEST( TreeStaleAfterInsertRemoveTest );
+	RUN_SUBTEST( TreeCategoryInNodeTest );
 
 	// todo test queries versus brute force
 
