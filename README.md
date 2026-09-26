@@ -113,6 +113,92 @@ typedef struct b2WheelJointDef
     uint8_t reserved     : 5;  
 } b2WheelJointDef;  
 ```
+
+## **4\. Implementation Status**
+
+Everything below is implemented, and all 24 unit test groups pass in Release and Debug.
+
+### Handles
+
+| Handle | Box2D v3 | Box2D-Packed | Layout |
+| :---- | :---- | :---- | :---- |
+| b2BodyId, b2ShapeId, b2ChainId, b2JointId | 8 bytes | **4 bytes** | `uint16_t index1; uint16_t generation;` |
+| b2ContactId | 12 bytes | **8 bytes** | `int32_t index1; uint32_t generation;` |
+| b2WorldId | 4 bytes | 4 bytes | unchanged |
+
+- `b2Store*Id` / `b2Load*Id` use `uint32_t` (`uint64_t` for contacts).
+- Contact ids keep 32-bit fields: large piles exceed 65535 contacts, and contacts churn fast enough that a 16-bit generation would wrap.
+- `B2_MAX_WORLDS` is 1 and enforced at compile time.
+
+### Def structs and filters
+
+- Flags are `bool name : 1`. A `bool` bit-field converts any non-zero value to 1, so `def.enableMotor = flags & MOTOR_BIT` works for any bit. A `uint8_t : 1` field keeps only the low bit and would silently store 0 for `0x2`.
+- `internalValue` is `uint16_t`, and `B2_SECRET_COOKIE` is `0xB2D5`.
+- Fields are ordered by alignment. Double-precision builds shrink by the same amounts.
+
+| Struct | Box2D v3 | Box2D-Packed |
+| :---- | :---- | :---- |
+| b2Filter | 24 | **6** |
+| b2QueryFilter | 16 | **4** |
+| b2ExplosionDef | 32 | **24** |
+| b2RayResult | 36 | **32** |
+| b2WorldDef | 120 | **112** |
+| b2BodyDef | 88 | **72** |
+| b2ShapeDef | 88 | **56** |
+| b2ChainDef | 88 | **64** |
+| b2DistanceJointDef | 128 | **112** |
+| b2PrismaticJointDef / b2RevoluteJointDef | 120 | **104** |
+| b2WheelJointDef | 112 | **104** |
+| b2MotionLocks | 3 | **1** |
+| b2Shape (internal) | 280 | **264** |
+
+### Limits
+
+- **One world at a time.** Destroy a world before creating the next one.
+- **65535 live bodies, shapes, chains, and joints per world**, each counted separately. Creating one more logs an error and returns a null id instead of wrapping onto an existing object. A chain is rejected up front if its segments would not all fit.
+- **16 collision categories.** `B2_DEFAULT_MASK_BITS` is `0xFFFF`. `groupIndex` is `int16_t`.
+- `b2RayResult` visit counts are `uint16_t` and saturate at 65535.
+- The recording format is 4.1. Older `.b2rec` files will not load.
+- The standalone `b2DynamicTree` API keeps 64-bit category and mask bits for non-physics use.
+
+### Benchmark: Box2D v3 vs Box2D-Packed
+
+Setup:
+- Upstream is commit `956ce4e`. Both builds use the same compiler and flags (`-O3 -DNDEBUG`, AVX2 off) and the same scenes.
+- Times are the median of 6 runs, interleaved between builds, on one worker thread.
+- `tile_world` is sized to 62,850 shapes in both builds to fit the handle limit.
+- Both builds simulate identical body, shape, contact, and joint counts in every scene.
+
+| Benchmark | Box2D v3 (ms) | Box2D-Packed (ms) | Time change (negative is faster) |
+| :---- | ----: | ----: | ----: |
+| compounds | 2554 | 2635 | +3.2% |
+| joint_grid | 3334 | 3260 | -2.2% |
+| junkyard | 4618 | 4587 | -0.7% |
+| large_pyramid | 1825 | 1847 | +1.2% |
+| many_pyramids | 2840 | 2856 | +0.5% |
+| rain | 9836 | 9797 | -0.4% |
+| smash | 1656 | 1663 | +0.5% |
+| spinner | 5862 | 5794 | -1.2% |
+| tumbler | 1800 | 1824 | +1.4% |
+| washer | 6229 | 6218 | -0.2% |
+| queries | 2573 | 2566 | -0.2% |
+| tree_cast | 1970 | 1983 | +0.7% |
+| tile_world | 741 | 745 | +0.6% |
+| sleep | 3879 | 3900 | +0.5% |
+
+**Result: simulation step time is unchanged.**
+- Every scene is within ±3.2%, which is inside the run-to-run noise (±0.3–3.7%).
+- The geometric mean is 0.25% slower, which is noise.
+
+This is expected. The solver runs on internal integer indices and SoA solver sets. Handles, defs, and filters are only touched at the API boundary and during creation, so shrinking them does not change the step itself.
+
+What the work so far does deliver:
+- Half-size handles in game-side storage, such as ECS components and entity arrays.
+- Handles passed in a single register.
+- Smaller creation-time structs.
+
+Reducing step time requires packing the internal hot-path data next: `b2Shape`, the body and contact simulation arrays, and the dynamic tree.
+
 # Box2D 
 
 Box2D is a 2D physics engine for games.
