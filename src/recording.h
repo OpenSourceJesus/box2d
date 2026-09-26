@@ -48,7 +48,7 @@ typedef struct b2World b2World;
 // Recording format version. Any mismatch refuses to load. The minor tracks op stream layout
 // changes that keep the 32 byte header shape.
 #define B2_REC_VERSION_MAJOR 4 // Box2D-Packed: 4-byte handles, no world index
-#define B2_REC_VERSION_MINOR 2 // category bits in tree nodes (snapshot 13)
+#define B2_REC_VERSION_MINOR 3 // 192-byte b2ContactSim (snapshot 14)
 
 // File header, fixed 32 bytes, little-endian
 typedef struct b2RecHeader

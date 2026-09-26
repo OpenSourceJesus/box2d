@@ -280,6 +280,7 @@ void b2CreateContact( b2World* world, b2Shape* shapeA, b2Shape* shapeB )
 	contact->shapeIdA = shapeIdA;
 	contact->shapeIdB = shapeIdB;
 	contact->flags = 0;
+	contact->cache = b2_emptySimplexCache;
 
 	// Both bodies must enable recycling
 	if ( ( bodyA->flags & b2_bodyEnableContactRecycling ) != 0 && ( bodyB->flags & b2_bodyEnableContactRecycling ) != 0 )
@@ -350,7 +351,6 @@ void b2CreateContact( b2World* world, b2Shape* shapeA, b2Shape* shapeB )
 	contactSim->invIB = 0.0f;
 	contactSim->shapeIdA = shapeIdA;
 	contactSim->shapeIdB = shapeIdB;
-	contactSim->cache = b2_emptySimplexCache;
 	contactSim->manifold = (b2Manifold){ 0 };
 
 	// These get updated in the narrow phase, but these are needed for first touch
@@ -546,7 +546,10 @@ bool b2UpdateContact( b2World* world, b2ContactSim* contactSim, b2Shape* shapeA,
 	// anchorB = worldPoint - pB = rot(qA, localAnchorA) + pA - pB = anchorA + (pA - pB)
 	b2Transform relativeTransform = b2InvMulWorldTransforms( transformA, transformB );
 	b2ManifoldFcn* fcn = b2_contactRegistry[shapeA->type][shapeB->type].fcn;
-	b2LocalManifold local = fcn( shapeA, shapeB, relativeTransform, &contactSim->cache );
+	// The simplex cache lives in the cold b2Contact. Taking its address does not touch memory,
+	// only chain segment manifolds dereference it.
+	b2SimplexCache* cache = &world->contacts.data[contactSim->contactId].cache;
+	b2LocalManifold local = fcn( shapeA, shapeB, relativeTransform, cache );
 
 	contactSim->manifold = (b2Manifold){ 0 };
 	contactSim->manifold.normal = b2RotateVector( transformA.q, local.normal );

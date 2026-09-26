@@ -32,7 +32,7 @@
 
 // Bump this if any of the data structures below get modified. The layout hash only catches
 // size changes, a same-size reinterpretation like the contact cache reshape needs this bump.
-#define B2_SNAP_VERSION 13u // Box2D-Packed: 4-byte handles, 16-bit filters, category bits in tree nodes
+#define B2_SNAP_VERSION 14u // Box2D-Packed: 192-byte b2ContactSim, simplex cache in b2Contact
 
 // Header flag bits
 #define B2_SNAP_FLAG_VALIDATION 0x1u	   // image was built with validation, only used for diagnostics

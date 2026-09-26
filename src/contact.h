@@ -96,6 +96,10 @@ typedef struct b2Contact
 	// This is monotonically advanced when a contact is allocated in this slot
 	// Used to check for invalid b2ContactId
 	uint32_t generation;
+
+	// Box2D-Packed: GJK warm start for the narrow phase, moved here from b2ContactSim. Only
+	// chain segment vs polygon/capsule reads it, so every other contact skips this cold record.
+	b2SimplexCache cache;
 } b2Contact;
 
 /// The class manages contact between two shapes. A contact exists for each overlapping
@@ -138,8 +142,13 @@ typedef struct b2ContactSim
 	float rollingResistance;
 	float tangentSpeed;
 
-	b2SimplexCache cache;
 } b2ContactSim;
+
+// Box2D-Packed: exactly three cache lines, so every contact in the 64-byte aligned color arrays
+// starts on a line boundary and the hot prefix never straddles an extra line.
+#if B2_ENABLE_VALIDATION == 0
+_Static_assert( sizeof( b2ContactSim ) == 192, "b2ContactSim should be three cache lines" );
+#endif
 
 bool b2CanCollide( b2ShapeType typeA, b2ShapeType typeB );
 
