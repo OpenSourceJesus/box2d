@@ -178,6 +178,11 @@ Setup:
 
 Negative is better. The biggest wins are in query-heavy scenes: filtered-out leaves no longer read the proxy array, and query callbacks read one shape cache line instead of three. `tree_cast` does not touch shapes, so its change comes from the tree node layout alone. The instruction count is essentially unchanged, so the savings are memory traffic, which matters more on real hardware with larger worlds and more threads.
 
+### Investigated and not changed
+
+- **Body simulation arrays.** In `large_pyramid`, `b2FinalizeBodiesTask` accounts for only about 2% of L1 data misses, and the integrate functions are not in the top 14. `b2BodyState` is already 32 bytes of hot fields, two per cache line.
+- **Contact solver ordering.** The wide contact solver (`Solve`, `WarmStart`, `Push`) accounts for 64% of `large_pyramid` L1 read misses. We tested sorting each graph color's contacts by body index, which is safe because a dynamic body appears at most once per color, and all determinism tests passed. Solver misses were identical to the last digit: they are the sequential stream through the 592-byte wide constraints, not body-state gathers. Cachegrind has no hardware prefetcher, so it counts every line of that stream, but real CPUs hide most of it. The sort added 10% instructions for no gain, so it was dropped. Shrinking the constraint stream (about 148 bytes per contact) needs hardware counters on real machines to evaluate.
+
 ### Limits
 
 - **One world at a time.** Destroy a world before creating the next one.
