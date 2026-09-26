@@ -36,8 +36,8 @@
 
   <Type Name="b2BodyId">
     <DisplayString>
-      {b2_worlds[world0].bodies.data[index1-1].name,na},
-      {b2_worlds[world0].bodies.data[index1-1].type}
+      {b2_worlds[0].bodies.data[index1-1].name,na},
+      {b2_worlds[0].bodies.data[index1-1].type}
     </DisplayString>
   </Type>
 
