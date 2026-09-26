@@ -17,7 +17,7 @@
 
 _Static_assert( B2_ROOT_NODE == 0, "bad root" );
 _Static_assert( sizeof( b2TreeNode ) == 32, "expected size" );
-_Static_assert( sizeof( b2TreeProxy ) == 24, "expected size" );
+_Static_assert( sizeof( b2TreeProxy ) == 16, "expected size" );
 
 // The free sibling pair list is chained through the parent index of their first node. A pair comes from the
 // free list when there is one and from the bump pointer otherwise. A rebuild empties the free list, so
@@ -194,10 +194,11 @@ static inline b2TreeNode b2MakeInternalNode( const b2TreeNode* nodes, int pair )
 	return node;
 }
 
-static inline b2TreeNode b2MakeLeafNode( b2AABB aabb, int proxyId, uint64_t userData, bool moved )
+static inline b2TreeNode b2MakeLeafNode( b2AABB aabb, int proxyId, uint64_t userData, uint64_t categoryBits, bool moved )
 {
 	b2TreeNode node = { 0 };
 	node.aabb = aabb;
+	node.categoryBits = categoryBits;
 	node.flagIndex = (uint32_t)proxyId | B2_LEAF_NODE | ( moved ? B2_MOVED_NODE : 0 );
 	node.shapeIndex = (uint32_t)userData;
 	return node;
@@ -484,10 +485,11 @@ static void b2RotateNodes( b2DynamicTree* tree, int iA )
 	}
 }
 
-static void b2InsertLeaf( b2DynamicTree* tree, b2AABB aabb, int proxyId, bool moved, bool shouldRotate )
+static void b2InsertLeaf( b2DynamicTree* tree, b2AABB aabb, int proxyId, uint64_t categoryBits, bool moved,
+						  bool shouldRotate )
 {
 	b2TreeProxy* proxy = tree->proxies + proxyId;
-	b2TreeNode leaf = b2MakeLeafNode( aabb, proxyId, proxy->userData, moved );
+	b2TreeNode leaf = b2MakeLeafNode( aabb, proxyId, proxy->userData, categoryBits, moved );
 
 	if ( b2IsEmptyNode( tree->nodes + B2_ROOT_NODE ) )
 	{
@@ -573,11 +575,10 @@ int b2CreateTreeProxyInternal( b2DynamicTree* tree, b2AABB aabb, uint64_t catego
 	int proxyId = b2AllocateProxy( tree );
 
 	b2TreeProxy* proxy = tree->proxies + proxyId;
-	proxy->categoryBits = categoryBits;
 	proxy->userData = userData;
 
 	bool shouldRotate = true;
-	b2InsertLeaf( tree, aabb, proxyId, markMoved, shouldRotate );
+	b2InsertLeaf( tree, aabb, proxyId, categoryBits, markMoved, shouldRotate );
 
 	return proxyId;
 }
@@ -607,10 +608,13 @@ void b2DynamicTree_MoveProxyInternal( b2DynamicTree* tree, int proxyId, b2AABB a
 	B2_VALIDATE( aabb.upperBound.y - aabb.lowerBound.y < B2_HUGE );
 	B2_ASSERT( 0 <= proxyId && proxyId < tree->proxyCapacity );
 
+	// The category lives in the leaf, so carry it across the reinsert
+	uint64_t categoryBits = tree->nodes[tree->proxies[proxyId].node].categoryBits;
+
 	b2RemoveLeaf( tree, proxyId );
 
 	bool shouldRotate = false;
-	b2InsertLeaf( tree, aabb, proxyId, markMoved, shouldRotate );
+	b2InsertLeaf( tree, aabb, proxyId, categoryBits, markMoved, shouldRotate );
 }
 
 void b2DynamicTree_MoveProxy( b2DynamicTree* tree, int proxyId, b2AABB aabb )
@@ -673,13 +677,17 @@ void b2DynamicTree_EnlargeProxy( b2DynamicTree* tree, int proxyId, b2AABB aabb )
 void b2DynamicTree_SetCategoryBits( b2DynamicTree* tree, int proxyId, uint64_t categoryBits )
 {
 	B2_ASSERT( 0 <= proxyId && proxyId < tree->proxyCapacity );
-	tree->proxies[proxyId].categoryBits = categoryBits;
+	int nodeIndex = tree->proxies[proxyId].node;
+	B2_ASSERT( b2IsLeaf( tree->nodes + nodeIndex ) );
+	tree->nodes[nodeIndex].categoryBits = categoryBits;
 }
 
 uint64_t b2DynamicTree_GetCategoryBits( b2DynamicTree* tree, int proxyId )
 {
 	B2_ASSERT( 0 <= proxyId && proxyId < tree->proxyCapacity );
-	return tree->proxies[proxyId].categoryBits;
+	int nodeIndex = tree->proxies[proxyId].node;
+	B2_ASSERT( b2IsLeaf( tree->nodes + nodeIndex ) );
+	return tree->nodes[nodeIndex].categoryBits;
 }
 
 int b2DynamicTree_GetHeight( const b2DynamicTree* tree )
@@ -759,6 +767,9 @@ static int b2ValidateSubtree( const b2DynamicTree* tree, int nodeIndex, int* lea
 	B2_ASSERT( b2AABB_Contains( node->aabb, c1->aabb ) );
 	B2_ASSERT( b2AABB_Contains( node->aabb, c2->aabb ) );
 	B2_ASSERT( b2IsNodeMoved( node ) == ( b2IsNodeMoved( c1 ) || b2IsNodeMoved( c2 ) ) );
+
+	// Box2D-Packed: category bits belong to leaves only
+	B2_ASSERT( node->categoryBits == 0 );
 
 	// A bad tree can stack overflow, but that is validation on its own.
 	int height1 = b2ValidateSubtree( tree, pair, leafCount );
@@ -900,11 +911,11 @@ b2TreeStats b2DynamicTree_Query( const b2DynamicTree* tree, b2AABB aabb, uint64_
 				if ( b2IsLeaf( node ) )
 				{
 					// callback to user code with proxy id
-					int proxyId = b2GetProxyId( node );
-					const b2TreeProxy* proxy = tree->proxies + proxyId;
-					if ( proxy->categoryBits & maskBits )
+					// Box2D-Packed: filter on the node, only passing leaves read the proxy
+					if ( node->categoryBits & maskBits )
 					{
-						bool proceed = callback( proxyId, proxy->userData, context );
+						int proxyId = b2GetProxyId( node );
+						bool proceed = callback( proxyId, tree->proxies[proxyId].userData, context );
 						result.leafVisits += 1;
 
 						if ( proceed == false )
@@ -1083,17 +1094,16 @@ b2TreeStats b2DynamicTree_CastRay( const b2DynamicTree* tree, const b2RayCastInp
 		{
 			if ( isLeaf[i] )
 			{
-				int proxyId = b2GetProxyId( hit[i] );
-				const b2TreeProxy* proxy = tree->proxies + proxyId;
-
-				if ( ( proxy->categoryBits & maskBits ) == 0 )
+				// Box2D-Packed: filter on the node, only passing leaves read the proxy
+				if ( ( hit[i]->categoryBits & maskBits ) == 0 )
 				{
 					continue;
 				}
 
+				int proxyId = b2GetProxyId( hit[i] );
 				subInput.maxFraction = maxFraction;
 
-				float value = callback( &subInput, proxyId, proxy->userData, context );
+				float value = callback( &subInput, proxyId, tree->proxies[proxyId].userData, context );
 				result.leafVisits += 1;
 
 				// The user may return -1 to indicate this shape should be skipped
@@ -1228,17 +1238,16 @@ b2TreeStats b2DynamicTree_CastBox( const b2DynamicTree* tree, const b2BoxCastInp
 		{
 			if ( isLeaf[i] )
 			{
-				int proxyId = b2GetProxyId( hit[i] );
-				const b2TreeProxy* proxy = tree->proxies + proxyId;
-
-				if ( ( proxy->categoryBits & maskBits ) == 0 )
+				// Box2D-Packed: filter on the node, only passing leaves read the proxy
+				if ( ( hit[i]->categoryBits & maskBits ) == 0 )
 				{
 					continue;
 				}
 
+				int proxyId = b2GetProxyId( hit[i] );
 				subInput.maxFraction = maxFraction;
 
-				float value = callback( &subInput, proxyId, proxy->userData, context );
+				float value = callback( &subInput, proxyId, tree->proxies[proxyId].userData, context );
 				result.leafVisits += 1;
 
 				// The user may return -1 to indicate this shape should be skipped

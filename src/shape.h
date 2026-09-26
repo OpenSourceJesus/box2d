@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <stddef.h>
+
 #include "container.h"
 
 #include "box2d/types.h"
@@ -10,24 +12,37 @@
 typedef struct b2BroadPhase b2BroadPhase;
 typedef struct b2World b2World;
 
+// Box2D-Packed: fields are ordered so everything the broad-phase pair filter reads
+// (bodyId, sensorIndex, type, filter, custom filtering flag, generation) sits in the first
+// 64-byte cache line. The flags are bit-fields, which brings the struct to exactly 256 bytes,
+// four cache lines, in the 64-byte aligned shape array.
 typedef struct b2Shape
 {
+	// Cache line 0: pair filtering and identity
 	int id;
 	int bodyId;
-	int prevShapeId;
-	int nextShapeId;
 	int sensorIndex;
 	b2ShapeType type;
-	b2SurfaceMaterial material;
+	b2Filter filter;
+	uint16_t generation;
+	bool enableSensorEvents : 1;
+	bool enableContactEvents : 1;
+	bool enableCustomFiltering : 1;
+	bool enableHitEvents : 1;
+	bool enablePreSolveEvents : 1;
+	int prevShapeId;
+	int nextShapeId;
+	int proxyKey;
 	float density;
 	float aabbMargin;
-	b2AABB aabb;
-	b2Vec2 localCentroid;
-	int proxyKey;
-
-	b2Filter filter;
 	void* userData;
 
+	// Cache line 1: bounds and material
+	b2AABB aabb;
+	b2Vec2 localCentroid;
+	b2SurfaceMaterial material;
+
+	// Cache lines 1-3: geometry
 	union
 	{
 		b2Capsule capsule;
@@ -36,14 +51,10 @@ typedef struct b2Shape
 		b2Segment segment;
 		b2ChainSegment chainSegment;
 	};
-
-	uint16_t generation;
-	bool enableSensorEvents;
-	bool enableContactEvents;
-	bool enableCustomFiltering;
-	bool enableHitEvents;
-	bool enablePreSolveEvents;
 } b2Shape;
+
+_Static_assert( sizeof( b2Shape ) == 256, "b2Shape should be four cache lines" );
+_Static_assert( offsetof( b2Shape, userData ) + sizeof( void* ) <= 64, "pair filter fields must fit in cache line 0" );
 
 typedef struct b2ChainShape
 {
