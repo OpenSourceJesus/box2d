@@ -679,8 +679,10 @@ typedef struct b2TreeNode
 	/// The node bounding box
 	b2AABB aabb;
 
-	/// In 3D this space is used by the AABB z components.
-	uint64_t padding;
+	/// Box2D-Packed: category bits of a leaf, zero for internal nodes. Queries test these
+	/// without touching the proxy array, so leaves rejected by the mask cost no extra memory read.
+	/// This is the space used by the AABB z components in 3D.
+	uint64_t categoryBits;
 
 	/// bit 31 : 1 for leaf node
 	/// bit 30 : 1 for moved flag
@@ -702,10 +704,8 @@ typedef struct b2TreeNode
 typedef struct b2TreeProxy
 {
 	/// User data is an index instead of void* because it is used internally as a shape index.
+	/// Box2D-Packed: category bits live in the leaf node, see b2TreeNode.
 	uint64_t userData;
-
-	/// Category bits for collision filtering.
-	uint64_t categoryBits;
 
 	/// The leaf node. B2_NULL_INDEX for a free proxy.
 	int32_t node;
