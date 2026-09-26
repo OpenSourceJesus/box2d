@@ -35,6 +35,10 @@
 #include <stdio.h>
 #include <string.h>
 
+// Box2D-Packed injection points. These comments are inert in normal builds. box2d_pack.py
+// replaces them with user code from an injection JSON file. See box2d_pack.py --list-markers.
+//$physics_world$GLOBALS
+
 _Static_assert( B2_MAX_WORLDS == 1, "Box2D-Packed is single-world" );
 static b2World b2_worlds[B2_MAX_WORLDS];
 
@@ -801,8 +805,14 @@ static void b2Collide( b2StepContext* context )
 						.generation = contact->generation,
 					};
 
+#ifndef B2_PACK_NO_CONTACT_BEGIN_ARRAY
 					b2ContactBeginTouchEvent event = { shapeIdA, shapeIdB, contactFullId };
 					b2Array_Push( world->contactBeginEvents, event );
+#endif
+
+					// Single threaded. In scope: world, shapeA, shapeB (const b2Shape*, ->userData),
+					// shapeIdA, shapeIdB, contactFullId, contactSim (->manifold is valid).
+					//$b2Collide$CONTACT_BEGIN
 				}
 
 				B2_ASSERT( contactSim->manifold.pointCount > 0 );
@@ -847,8 +857,14 @@ static void b2Collide( b2StepContext* context )
 						.generation = contact->generation,
 					};
 
+#ifndef B2_PACK_NO_CONTACT_END_ARRAY
 					b2ContactEndTouchEvent event = { shapeIdA, shapeIdB, contactFullId };
 					b2Array_Push( world->contactEndEvents[endEventArrayIndex], event );
+#endif
+
+					// Single threaded. In scope: world, shapeA, shapeB (const b2Shape*, ->userData),
+					// shapeIdA, shapeIdB, contactFullId.
+					//$b2Collide$CONTACT_END
 				}
 
 				B2_ASSERT( contactSim->manifold.pointCount == 0 );
@@ -888,6 +904,9 @@ void b2World_Step( b2WorldId worldId, float timeStep, int subStepCount )
 		b2TracyCFrame;
 		return;
 	}
+
+	// World is unlocked. In scope: world, worldId, timeStep, subStepCount.
+	//$b2World_Step$HEADER
 
 	// Record step inputs before simulation runs
 	B2_REC( world, Step, worldId, timeStep, subStepCount );
@@ -1034,6 +1053,9 @@ void b2World_Step( b2WorldId worldId, float timeStep, int subStepCount )
 	}
 
 	world->locked = false;
+
+	// World is unlocked, events for this step are available. In scope: world, worldId, timeStep.
+	//$b2World_Step$FOOTER
 
 	b2TracyCFrame;
 }
