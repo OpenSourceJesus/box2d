@@ -7,6 +7,7 @@
 #include "core.h"
 #include "island.h"
 #include "physics_world.h"
+#include "pack_hooks.h"
 #include "shape.h"
 #include "solver_set.h"
 #include "table.h"
@@ -604,13 +605,22 @@ bool b2UpdateContact( b2World* world, b2ContactSim* contactSim, b2Shape* shapeA,
 	int pointCount = contactSim->manifold.pointCount;
 	bool touching = pointCount > 0;
 
-	if ( touching && world->preSolveFcn != NULL && ( contactSim->simFlags & b2_simEnablePreSolveEvents ) != 0 )
+	if ( touching && ( contactSim->simFlags & b2_simEnablePreSolveEvents ) != 0 )
 	{
-		b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
-		b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
+		// WORKER THREADS, must be thread-safe. In scope: world, shapeA, shapeB (b2Shape*, ->userData),
+		// contactSim (->manifold may be changed, set ->manifold.pointCount = 0 to disable the contact).
+		//$b2UpdateContact$PRE_SOLVE
 
-		// This call assumes thread safety.
-		world->preSolveFcn( shapeIdA, shapeIdB, &contactSim->manifold, world->preSolveContext );
+#ifndef B2_PACK_NO_PRE_SOLVE_FCN
+		if ( world->preSolveFcn != NULL )
+		{
+			b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+			b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
+
+			// This call assumes thread safety.
+			world->preSolveFcn( shapeIdA, shapeIdB, &contactSim->manifold, world->preSolveContext );
+		}
+#endif
 
 		// Keep these current.
 		pointCount = contactSim->manifold.pointCount;

@@ -26,6 +26,7 @@
 #include "shape.h"
 #include "simd.h"
 #include "solver.h"
+#include "pack_hooks.h"
 #include "solver_set.h"
 
 #include "box2d/box2d.h"
@@ -35,9 +36,8 @@
 #include <stdio.h>
 #include <string.h>
 
-// Box2D-Packed injection points. These comments are inert in normal builds. box2d_pack.py
-// replaces them with user code from an injection JSON file. See box2d_pack.py --list-markers.
-//$physics_world$GLOBALS
+// Box2D-Packed injection points in this file are inert comments in normal builds. box2d_pack.py
+// replaces them with user code. User declarations come from pack_hooks.h.
 
 _Static_assert( B2_MAX_WORLDS == 1, "Box2D-Packed is single-world" );
 static b2World b2_worlds[B2_MAX_WORLDS];

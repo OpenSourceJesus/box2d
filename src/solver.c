@@ -17,6 +17,7 @@
 #include "physics_world.h"
 #include "platform.h"
 #include "sensor.h"
+#include "pack_hooks.h"
 #include "shape.h"
 #include "solver_set.h"
 
@@ -244,6 +245,13 @@ static bool b2ContinuousQueryCallback( int proxyId, uint64_t userData, void* con
 	// Custom user filtering
 	if ( shape->enableCustomFiltering || fastShape->enableCustomFiltering )
 	{
+		// Box2D-Packed: injected filter, see pack_hooks.h. Removed by the compiler when empty.
+		if ( b2PackCustomFilter( shape, fastShape ) == false )
+		{
+			return true;
+		}
+
+#ifndef B2_PACK_NO_CUSTOM_FILTER_FCN
 		b2CustomFilterFcn* customFilterFcn = world->customFilterFcn;
 		if ( customFilterFcn != NULL )
 		{
@@ -255,6 +263,7 @@ static bool b2ContinuousQueryCallback( int proxyId, uint64_t userData, void* con
 				return true;
 			}
 		}
+#endif
 	}
 
 	// Early out on fast parallel movement over a chain shape.
@@ -1848,7 +1857,13 @@ void b2Solve( b2World* world, b2StepContext* stepContext )
 							.generation = contact->generation,
 						};
 
+#ifndef B2_PACK_NO_CONTACT_HIT_ARRAY
 						b2Array_Push( world->contactHitEvents, event );
+#endif
+
+						// Single threaded, world locked. In scope: world, shapeA, shapeB (b2Shape*,
+						// ->userData), event (b2ContactHitEvent: point, normal, approachSpeed, ids).
+						//$b2Solve$CONTACT_HIT
 					}
 
 					// Clear the smallest set bit

@@ -17,6 +17,7 @@
 #include "physics_world.h"
 #include "platform.h"
 #include "qsort.h"
+#include "pack_hooks.h"
 #include "shape.h"
 #include "simd.h"
 
@@ -227,6 +228,13 @@ static void b2FlushCandidatePairs( b2PairContext* context )
 		// Custom user filter
 		if ( shapeA->enableCustomFiltering || shapeB->enableCustomFiltering )
 		{
+			// Box2D-Packed: injected filter, see pack_hooks.h. Removed by the compiler when empty.
+			if ( b2PackCustomFilter( shapeA, shapeB ) == false )
+			{
+				continue;
+			}
+
+#ifndef B2_PACK_NO_CUSTOM_FILTER_FCN
 			b2CustomFilterFcn* customFilterFcn = world->customFilterFcn;
 			if ( customFilterFcn != NULL )
 			{
@@ -238,6 +246,7 @@ static void b2FlushCandidatePairs( b2PairContext* context )
 					continue;
 				}
 			}
+#endif
 		}
 
 		// The pair passed the gauntlet. A new contact will be created.
