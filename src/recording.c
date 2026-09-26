@@ -160,22 +160,22 @@ void b2RecW_WORLDID( b2RecBuffer* buf, b2WorldId v )
 
 void b2RecW_BODYID( b2RecBuffer* buf, b2BodyId v )
 {
-	b2RecW_U64( buf, b2StoreBodyId( v ) );
+	b2RecW_U32( buf, b2StoreBodyId( v ) );
 }
 
 void b2RecW_SHAPEID( b2RecBuffer* buf, b2ShapeId v )
 {
-	b2RecW_U64( buf, b2StoreShapeId( v ) );
+	b2RecW_U32( buf, b2StoreShapeId( v ) );
 }
 
 void b2RecW_CHAINID( b2RecBuffer* buf, b2ChainId v )
 {
-	b2RecW_U64( buf, b2StoreChainId( v ) );
+	b2RecW_U32( buf, b2StoreChainId( v ) );
 }
 
 void b2RecW_JOINTID( b2RecBuffer* buf, b2JointId v )
 {
-	b2RecW_U64( buf, b2StoreJointId( v ) );
+	b2RecW_U32( buf, b2StoreJointId( v ) );
 }
 
 // Geometry is pointer-free POD, pointerWidth in the header gates the layout

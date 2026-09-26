@@ -177,22 +177,22 @@ b2WorldId b2RecR_WORLDID( b2RecReader* rdr )
 
 b2BodyId b2RecR_BODYID( b2RecReader* rdr )
 {
-	return b2LoadBodyId( b2RecR_U64( rdr ) );
+	return b2LoadBodyId( b2RecR_U32( rdr ) );
 }
 
 b2ShapeId b2RecR_SHAPEID( b2RecReader* rdr )
 {
-	return b2LoadShapeId( b2RecR_U64( rdr ) );
+	return b2LoadShapeId( b2RecR_U32( rdr ) );
 }
 
 b2ChainId b2RecR_CHAINID( b2RecReader* rdr )
 {
-	return b2LoadChainId( b2RecR_U64( rdr ) );
+	return b2LoadChainId( b2RecR_U32( rdr ) );
 }
 
 b2JointId b2RecR_JOINTID( b2RecReader* rdr )
 {
-	return b2LoadJointId( b2RecR_U64( rdr ) );
+	return b2LoadJointId( b2RecR_U32( rdr ) );
 }
 
 // Read a pointer-free POD blob of the given size into out, advancing the cursor.
@@ -423,7 +423,7 @@ b2ExplosionDef b2RecR_EXPLOSIONDEF( b2RecReader* rdr )
 	return def;
 }
 
-// Body ids are read with their recorded world0; the create dispatcher remaps them.
+// Body ids are read as recorded. Box2D-Packed handles carry no world index, so they are valid as-is.
 static void b2RecR_JointBase( b2RecReader* rdr, b2JointDef* base )
 {
 	(void)b2RecR_U64( rdr ); // userData
@@ -616,7 +616,7 @@ b2WorldCastOutput b2RecR_WORLDCASTOUTPUT( b2RecReader* rdr )
 b2RayResult b2RecR_RAYRESULT( b2RecReader* rdr )
 {
 	b2RayResult v;
-	// shapeId keeps the recorded world0; b2RecMakeShapeId is applied at compare time
+	// shapeId is compared as recorded; handles carry no world index
 	v.shapeId = b2RecR_SHAPEID( rdr );
 	v.point = b2RecR_POSITION( rdr );
 	v.normal = b2RecR_VEC2( rdr );
@@ -703,46 +703,47 @@ void b2RecEnsureHits( b2RecReader* rdr, int n )
 }
 
 // Per op dispatch, the only place real public API names appear
-// Body and shape ids have world0 replaced with the replay world's slot index
+// Box2D-Packed: handles carry no world index, so these are pass-through. They are kept as a
+// single place to remap ids if the recording format ever needs it.
 
 static b2BodyId b2RecMakeBodyId( b2RecReader* rdr, b2BodyId recorded )
 {
+	(void)rdr;
 	b2BodyId id;
 	id.index1 = recorded.index1;
-	id.world0 = (uint16_t)( rdr->replayWorldId.index1 - 1u );
 	id.generation = recorded.generation;
 	return id;
 }
 
 static b2ShapeId b2RecMakeShapeId( b2RecReader* rdr, b2ShapeId recorded )
 {
+	(void)rdr;
 	b2ShapeId id;
 	id.index1 = recorded.index1;
-	id.world0 = (uint16_t)( rdr->replayWorldId.index1 - 1u );
 	id.generation = recorded.generation;
 	return id;
 }
 
 static b2ChainId b2RecMakeChainId( b2RecReader* rdr, b2ChainId recorded )
 {
+	(void)rdr;
 	b2ChainId id;
 	id.index1 = recorded.index1;
-	id.world0 = (uint16_t)( rdr->replayWorldId.index1 - 1u );
 	id.generation = recorded.generation;
 	return id;
 }
 
 static b2JointId b2RecMakeJointId( b2RecReader* rdr, b2JointId recorded )
 {
+	(void)rdr;
 	b2JointId id;
 	id.index1 = recorded.index1;
-	id.world0 = (uint16_t)( rdr->replayWorldId.index1 - 1u );
 	id.generation = recorded.generation;
 	return id;
 }
 
-// A create op appends its returned id after the args. Replay compares index1 and generation
-// only, since world0 differs between record and replay. A mismatch means structural drift.
+// A create op appends its returned id after the args. Replay compares index1 and generation.
+// A mismatch means structural drift.
 
 static void b2RecCheckId( b2RecReader* rdr, const char* kind, int gotIndex, unsigned gotGen, int recIndex, unsigned recGen )
 {
