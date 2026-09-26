@@ -173,6 +173,8 @@ static const b2BodyState b2_identityBodyState = { { 0.0f, 0.0f }, 0.0f, 0, { 0.0
 
 // Body simulation data used for integration of position and velocity
 // Transform data used for collision and solver preparation.
+// Box2D-Packed: the fields the narrow phase collide task reads for every contact come first
+// (transform, center, invMass, invInertia, maxExtent, flags) so they share one cache line more often.
 typedef struct b2BodySim
 {
 	// transform for body origin, double translation in large world mode
@@ -180,6 +182,15 @@ typedef struct b2BodySim
 
 	// center of mass position in world space
 	b2Pos center;
+
+	// inverse inertia
+	float invMass;
+	float invInertia;
+
+	float maxExtent;
+
+	// b2BodyFlags
+	uint32_t flags;
 
 	// previous rotation and COM for TOI
 	b2Rot rotation0;
@@ -191,21 +202,13 @@ typedef struct b2BodySim
 	b2Vec2 force;
 	float torque;
 
-	// inverse inertia
-	float invMass;
-	float invInertia;
-
 	float minExtent;
-	float maxExtent;
 	float linearDamping;
 	float angularDamping;
 	float gravityScale;
 
 	// Index of b2Body
 	int bodyId;
-
-	// b2BodyFlags
-	uint32_t flags;
 } b2BodySim;
 
 // Get a validated body from a world using an id.

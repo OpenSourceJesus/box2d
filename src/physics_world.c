@@ -430,8 +430,11 @@ static inline float b2RelativeCos( b2Rot a, b2Rot b )
 	return a.c * b.c + a.s * b.s;
 }
 
+// Box2D-Packed: takes the shape instead of its body id so the shape is only read in the rare
+// fallback branch. Awake and static contacts resolve from the encoded index alone, which avoids
+// two random b2Shape cache line reads per contact in the collide task.
 static inline b2BodySim* b2ResolveContactBodySim( b2World* world, b2BodySim* awakeSims, b2BodySim* staticSims, int encodedIndex,
-												  int bodyId )
+												  const b2Shape* shape )
 {
 	if ( encodedIndex >= 0 )
 	{
@@ -443,7 +446,7 @@ static inline b2BodySim* b2ResolveContactBodySim( b2World* world, b2BodySim* awa
 		return staticSims - encodedIndex - 2;
 	}
 
-	return b2GetBodySim( world, b2Array_Get( world->bodies, bodyId ) );
+	return b2GetBodySim( world, b2Array_Get( world->bodies, shape->bodyId ) );
 }
 
 static void b2CollideTask( int startIndex, int endIndex, int workerIndex, void* context )
@@ -510,8 +513,8 @@ static void b2CollideTask( int startIndex, int endIndex, int workerIndex, void* 
 			// Update contact respecting shape/body order (A,B)
 			int encodedA = contactSim->encodedBodySimA;
 			int encodedB = contactSim->encodedBodySimB;
-			b2BodySim* bodySimA = b2ResolveContactBodySim( world, awakeSims, staticSims, encodedA, shapeA->bodyId );
-			b2BodySim* bodySimB = b2ResolveContactBodySim( world, awakeSims, staticSims, encodedB, shapeB->bodyId );
+			b2BodySim* bodySimA = b2ResolveContactBodySim( world, awakeSims, staticSims, encodedA, shapeA );
+			b2BodySim* bodySimB = b2ResolveContactBodySim( world, awakeSims, staticSims, encodedB, shapeB );
 			b2WorldTransform transformA = bodySimA->transform;
 			b2WorldTransform transformB = bodySimB->transform;
 
