@@ -333,6 +333,19 @@ Each injected event saves about 74 instructions and 5.2 L1 data misses: the arra
 
 With 17 times the arena's event rate, the instruction saving stays at 0.16%, about 66 per event, because each event carries much larger engine work. Last-level misses rise. The handler now touches game objects in the middle of the step, which evicts engine data, and the game's post-step recycle pass no longer finds those objects in cache. Injection pays off when the handler uses engine data that is hot at the marker, or records little. It does not when the game does follow-up work on the same objects after the step. See [INTRUSIVENGINE.md](INTRUSIVENGINE.md).
 
+### Demo: platformer crowd pre-solve (`examples/pack_presolve`)
+
+12,000 circles fall through staggered one-way platforms. Every contact runs a pre-solve handler that reads both shapes' user data. Ghosts pass through everything, and platforms let bodies pass upward. Sleep and contact recycling are off, because Box2D skips pre-solve for recycled contacts. All four builds print the same checksum. Cachegrind, 100 steps:
+
+| Build | Instructions | L1 data misses | Last-level data misses |
+| :---- | ----: | ----: | ----: |
+| Standard callback | baseline | baseline | baseline |
+| Standard + `--lto` | -5.86% | -0.01% | -0.07% |
+| Injected | -1.33% | -0.20% | -0.84% |
+| Injected + `--lto` | -6.77% | -0.20% | -0.92% |
+
+Injection removes the callback wrapper and two `b2Shape_GetUserData` lookups per contact. That saves about 1% of instructions, with or without `--lto`, and lowers last-level misses. The handler reads user data while the engine holds that contact's shapes, and no game pass after the step touches the same objects. Link-time optimization is the larger, separate effect: compiling the engine and game as one program saves 5.9% of instructions even without injection.
+
 # Box2D 
 
 Box2D is a 2D physics engine for games.

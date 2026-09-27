@@ -144,7 +144,7 @@ Unknown keys, unknown markers, and unknown events are errors. An unknown marker 
 | `sensor_begin` | `b2PackSensorBegin$SENSOR_BEGIN` | When a shape starts overlapping a sensor. Single threaded, world locked. | `sensorShape`, `visitorShape` (`const b2Shape*`), `sensorId`, `visitorId` |
 | `sensor_end` | `b2PackSensorEnd$SENSOR_END` | When it stops overlapping. Single threaded, world locked. | `sensorShape`, `visitorShape` (`NULL` if the visitor was destroyed), `sensorId`, `visitorId` |
 | `custom_filter` | `b2PackCustomFilter$FILTER` | **Worker threads.** For pairs where either shape enables custom filtering, in the broad phase, sensor overlaps, and continuous collision. | `shapeA`, `shapeB` (`const b2Shape*`), `shouldCollide` (set `false` to reject the pair) |
-| `pre_solve` | `b2UpdateContact$PRE_SOLVE` | **Worker threads.** For touching contacts where either shape enables pre-solve events. | `world`, `shapeA`, `shapeB` (`b2Shape*`), `contactSim` (change `->manifold`, set `->manifold.pointCount = 0` to disable the contact this step) |
+| `pre_solve` | `b2UpdateContact$PRE_SOLVE` | **Worker threads.** For touching contacts where either shape enables pre-solve events, when the narrow phase updates them. Recycled contacts skip the update, so pre-solve does not run for them, the same as the callback. | `world`, `shapeA`, `shapeB` (`b2Shape*`), `contactSim` (change `->manifold`, set `->manifold.pointCount = 0` to disable the contact this step) |
 | `post_step` | `b2World_Step$FOOTER` | End of every step, world unlocked, events available | `world`, `worldId`, `timeStep` |
 
 These defines turn off the engine's own path when injected code replaces it:
@@ -198,8 +198,11 @@ Each injected event saves the event path: the array write during the step, the a
 | :---- | ----: | ----: | ----: | ----: |
 | Arena brawl, `examples/pack_game` | 121 | -0.16% (74 per event) | -0.50% | 0% |
 | Bullet storm, `examples/pack_bullets` | 2,112 | -0.16% (66 per event) | -0.26% | **+0.62%** |
+| Platformer crowd pre-solve, `examples/pack_presolve` | about 40,000 contacts | -1.33% | -0.20% | **-0.84%** |
 
-Two lessons come from these numbers.
+The platformer crowd replaces a pre-solve callback that runs for every touching contact every step. It is the best fit measured so far. Injection saves 1.3% of instructions and 0.84% of last-level misses: the handler reads user data while the engine holds that contact's shapes, and no game pass after the step touches the same objects. Link-time optimization (`--lto`) is a separate and larger effect, covered below.
+
+Two lessons come from the event demos.
 
 **The event path is a small share, even with many events.** The bullet storm has 17 times the arena's event rate, yet saves the same 0.16% of instructions. Each event there comes with much larger engine work: a contact is created and destroyed, and the recycled bullet's broad-phase proxy moves. The saving per event is real and consistent, about 70 instructions, but it is small next to that work.
 
@@ -217,8 +220,20 @@ Guidelines that follow from this:
 | The game does follow-up work on the same objects after the step | Weak or negative. Keep that work together, or queue ids and do it all after the step. |
 | Game logic called through a function pointer per pair or contact (`custom_filter`, `pre_solve`) | Good fit, with `--lto`. The indirect call is removed. It is still worker-thread code. |
 
-Measure your own game. Build it both ways from one source with `B2_PACK_INJECTED`, check that both builds produce the same results, and compare them.
+### Link-time optimization
 
+`--lto` compiles the engine and the game as one program, so gcc can inline across Box2D's own source files as well as into user code. In the platformer crowd, measured with Cachegrind:
+
+| Build | Instructions | L1 data misses | Last-level data misses |
+| :---- | ----: | ----: | ----: |
+| Standard callback | baseline | baseline | baseline |
+| Standard + `--lto` | -5.86% | -0.01% | -0.07% |
+| Injected | -1.33% | -0.20% | -0.84% |
+| Injected + `--lto` | -6.77% | -0.20% | -0.92% |
+
+Most of the instruction saving comes from link-time optimization of the engine itself, not from injection. Injection adds about 1% on top of it. Both are worth having, and `--lto` helps even without an injection file. Wall-clock medians over five interleaved runs agreed in direction: -1.8% for standard + `--lto` and -2.8% for injected + `--lto`. That machine's run-to-run noise is several percent, so treat the times as supporting evidence.
+
+Measure your own game. Build it both ways from one source with `B2_PACK_INJECTED`, check that both builds produce the same results, and compare them.
 
 ## Adding an injection point
 
@@ -233,9 +248,10 @@ Markers are cheap to add and inert in normal builds. To add one to the engine:
 
 ## Roadmap
 
-Done: sensor begin and end, hit events, custom filter, and pre-solve markers, with equivalence tests, and the bullet storm benchmark.
+Done: sensor begin and end, hit events, custom filter, and pre-solve markers, with equivalence tests, and the bullet storm and platformer crowd benchmarks.
 
 - **Hardware measurement.** Time and hardware counters on real multi-core machines, where prefetching and larger caches may change the balance measured above.
 - **Worker-thread tests.** Run the equivalence test with several workers, to check injected filter and pre-solve code under real concurrency.
-- **Filter and pre-solve benchmark.** A scene with heavy custom filtering or pre-solve, to measure removing the indirect call with `--lto`.
+- **Custom filter benchmark.** The filter runs once per new candidate pair, so it needs a scene with heavy pair churn.
+- **Link-time optimization in CMake.** Measure the engine-wide `--lto` gain on the standard benchmark suite, independent of injection.
 - **Sensor-heavy benchmark.** Pickups and trigger volumes at scale.
