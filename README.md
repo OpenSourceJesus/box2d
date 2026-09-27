@@ -1,7 +1,8 @@
 # Box2D-Packed
 
 "From C# Scripts to Packed C Zero-Indirection Physics: A Cache-Optimized 2D Game Engine Architecture with Intrusive Execution"
-- https://doi.org/10.5281/zenodo.23002562 
+- https://doi.org/10.5281/zenodo.23002562
+- https://ai.vixra.org/pdf/2609.0068v1.pdf
 
 ## Game-Side & API Performance: Faster Handle Operations
 
