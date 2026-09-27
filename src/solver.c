@@ -70,10 +70,11 @@ static void b2IntegrateVelocitiesTask( b2SolverBlock block, b2StepContext* conte
 
 	b2BodyState* states = context->states;
 	b2BodySim* sims = context->sims;
+	b2World* world = context->world;
 
-	B2_VALIDATE( block.startIndex + block.count <= context->world->solverSets.data[b2_awakeSet].bodyStates.count );
+	B2_VALIDATE( block.startIndex + block.count <= world->solverSets.data[b2_awakeSet].bodyStates.count );
 
-	b2Vec2 gravity = context->world->gravity;
+	b2Vec2 gravity = world->gravity;
 	float h = context->h;
 
 	for ( int i = block.startIndex; i < block.startIndex + block.count; ++i )
@@ -97,9 +98,16 @@ static void b2IntegrateVelocitiesTask( b2SolverBlock block, b2StepContext* conte
 
 		// Gravity scale will be zero for kinematic bodies
 		float gravityScale = sim->invMass > 0.0f ? sim->gravityScale : 0.0f;
+		b2Vec2 bodyGravity = gravity;
+
+		// Box2D-Packed: injected per-body gravity, see pack_hooks.h. Removed by the compiler when empty.
+		if ( sim->invMass > 0.0f )
+		{
+			b2PackBodyGravity( world, sim, &gravityScale, &bodyGravity );
+		}
 
 		// lvd = h * im * f + h * g
-		b2Vec2 linearVelocityDelta = b2Add( b2MulSV( h * sim->invMass, sim->force ), b2MulSV( h * gravityScale, gravity ) );
+		b2Vec2 linearVelocityDelta = b2Add( b2MulSV( h * sim->invMass, sim->force ), b2MulSV( h * gravityScale, bodyGravity ) );
 		float angularVelocityDelta = h * sim->invInertia * sim->torque;
 
 		v = b2MulAdd( linearVelocityDelta, linearDamping, v );
@@ -483,7 +491,11 @@ static void b2SolveContinuous( b2World* world, int bodySimIndex, b2TaskContext* 
 		b2BodyState* fastBodyState = b2Array_Get( awakeSet->bodyStates, bodySimIndex );
 		b2Vec2 v = fastBodyState->linearVelocity;
 		float timeLoss = ( 1.0f - context.fraction ) * dt;
-		b2Vec2 dv = b2MulSV( -timeLoss * fastBodySim->gravityScale, world->gravity );
+		// Box2D-Packed: the same per-body gravity as velocity integration, see pack_hooks.h
+		float gravityScale = fastBodySim->gravityScale;
+		b2Vec2 bodyGravity = world->gravity;
+		b2PackBodyGravity( world, fastBodySim, &gravityScale, &bodyGravity );
+		b2Vec2 dv = b2MulSV( -timeLoss * gravityScale, bodyGravity );
 		dv.x = ( fastBodyState->flags & b2_lockLinearX ) ? 0.0f : dv.x;
 		dv.y = ( fastBodyState->flags & b2_lockLinearY ) ? 0.0f : dv.y;
 		fastBodyState->linearVelocity = b2Add( v, dv );
