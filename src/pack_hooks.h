@@ -14,6 +14,29 @@
 // extern variables here. A definition would be duplicated in each file.
 //$pack_hooks$GLOBALS
 
+// Contact end touch, from every place a touching contact ends: the narrow phase when shapes stop
+// touching, and contact destruction when bounding boxes separate or when a body or shape is
+// destroyed, disabled, or refiltered. Pushes the end event and runs the injection marker.
+static inline void b2PackContactEnd( b2World* world, const b2Shape* shapeA, const b2Shape* shapeB,
+									 b2ContactId contactFullId )
+{
+	b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
+	b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
+
+#ifndef B2_PACK_NO_CONTACT_END_ARRAY
+	b2ContactEndTouchEvent event = { shapeIdA, shapeIdB, contactFullId };
+	b2Array_Push( world->contactEndEvents[world->endEventArrayIndex], event );
+#endif
+
+	// Single threaded. Usually inside the step with the world locked, but also inside calls such as
+	// b2DestroyBody and b2DestroyShape: do not create or destroy anything here. In scope: world,
+	// shapeA, shapeB (const b2Shape*, ->userData), shapeIdA, shapeIdB, contactFullId.
+	//$b2PackContactEnd$CONTACT_END
+
+	(void)shapeIdA;
+	(void)shapeIdB;
+}
+
 // User data of the body that owns a body sim. The b2Body record is cold, so this is a random read.
 static inline void* b2PackBodyUserData( const b2World* world, const b2BodySim* sim )
 {

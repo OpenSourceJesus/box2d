@@ -748,8 +748,6 @@ static void b2Collide( b2StepContext* context )
 
 	b2SolverSet* awakeSet = b2Array_Get( world->solverSets, b2_awakeSet );
 
-	int endEventArrayIndex = world->endEventArrayIndex;
-
 	const b2Shape* shapes = world->shapes.data;
 
 	// Process contact state changes. Iterate over set bits
@@ -848,23 +846,13 @@ static void b2Collide( b2StepContext* context )
 
 				if ( contact->flags & b2_contactEnableContactEvents )
 				{
-					const b2Shape* shapeA = shapes + contact->shapeIdA;
-					const b2Shape* shapeB = shapes + contact->shapeIdB;
-					b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
-					b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 					b2ContactId contactFullId = {
 						.index1 = contactId + 1,
 						.generation = contact->generation,
 					};
 
-#ifndef B2_PACK_NO_CONTACT_END_ARRAY
-					b2ContactEndTouchEvent event = { shapeIdA, shapeIdB, contactFullId };
-					b2Array_Push( world->contactEndEvents[endEventArrayIndex], event );
-#endif
-
-					// Single threaded. In scope: world, shapeA, shapeB (const b2Shape*, ->userData),
-					// shapeIdA, shapeIdB, contactFullId.
-					//$b2Collide$CONTACT_END
+					// Box2D-Packed: event and injection marker, see pack_hooks.h
+					b2PackContactEnd( world, shapes + contact->shapeIdA, shapes + contact->shapeIdB, contactFullId );
 				}
 
 				B2_ASSERT( contactSim->manifold.pointCount == 0 );

@@ -413,21 +413,14 @@ void b2DestroyContact( b2World* world, b2Contact* contact )
 	{
 		const b2Shape* shapeA = b2Array_Get( world->shapes, contact->shapeIdA );
 		const b2Shape* shapeB = b2Array_Get( world->shapes, contact->shapeIdB );
-		b2ShapeId shapeIdA = { (uint16_t)( shapeA->id + 1 ), shapeA->generation };
-		b2ShapeId shapeIdB = { (uint16_t)( shapeB->id + 1 ), shapeB->generation };
 
 		b2ContactId contactId = {
 			.index1 = contact->contactId + 1,
 			.generation = contact->generation,
 		};
 
-		b2ContactEndTouchEvent event = {
-			.shapeIdA = shapeIdA,
-			.shapeIdB = shapeIdB,
-			.contactId = contactId,
-		};
-
-		b2Array_Push( world->contactEndEvents[world->endEventArrayIndex], event );
+		// Box2D-Packed: event and injection marker, see pack_hooks.h
+		b2PackContactEnd( world, shapeA, shapeB, contactId );
 	}
 
 	// Remove from body A
