@@ -36,6 +36,8 @@ static b2BodyId g_ballBodies[BALL_COUNT];
 void Test_SensorBegin( void* sensorData, void* visitorData );
 void Test_SensorEnd( void* sensorData, void* visitorData );
 void Test_Hit( void* dataA, void* dataB, float approachSpeed );
+void Test_ContactBegin( void* dataA, void* dataB );
+void Test_ContactEnd( void* dataA, void* dataB );
 int Test_Filter( void* dataA, void* dataB );
 int Test_PreSolve( void* dataA, void* dataB, b2Manifold* manifold );
 
@@ -69,6 +71,20 @@ void Test_Hit( void* dataA, void* dataB, float approachSpeed )
 	b->hits += 1;
 	a->hitSpeed += approachSpeed;
 	b->hitSpeed += approachSpeed;
+}
+
+// Contact begin and end. End events come from two engine paths: shapes that stop touching, and
+// contacts destroyed when bounding boxes separate. Bouncing balls produce both.
+void Test_ContactBegin( void* dataA, void* dataB )
+{
+	( (Thing*)dataA )->contactBegins += 1;
+	( (Thing*)dataB )->contactBegins += 1;
+}
+
+void Test_ContactEnd( void* dataA, void* dataB )
+{
+	( (Thing*)dataA )->contactEnds += 1;
+	( (Thing*)dataB )->contactEnds += 1;
 }
 
 // Balls of team 0 and team 2 pass through each other. Pure function of its inputs, thread-safe.
@@ -175,6 +191,7 @@ int main( void )
 	b2ShapeDef ballDef = b2DefaultShapeDef();
 	ballDef.enableSensorEvents = true;
 	ballDef.enableHitEvents = true;
+	ballDef.enableContactEvents = true;
 	ballDef.enableCustomFiltering = true;
 	ballDef.enablePreSolveEvents = true;
 	ballDef.material.restitution = 0.4f;
@@ -213,6 +230,16 @@ int main( void )
 		}
 
 		b2ContactEvents ce = b2World_GetContactEvents( worldId );
+		for ( int i = 0; i < ce.beginCount; ++i )
+		{
+			Test_ContactBegin( b2Shape_GetUserData( ce.beginEvents[i].shapeIdA ),
+							   b2Shape_GetUserData( ce.beginEvents[i].shapeIdB ) );
+		}
+		for ( int i = 0; i < ce.endCount; ++i )
+		{
+			Test_ContactEnd( b2Shape_GetUserData( ce.endEvents[i].shapeIdA ),
+							 b2Shape_GetUserData( ce.endEvents[i].shapeIdB ) );
+		}
 		for ( int i = 0; i < ce.hitCount; ++i )
 		{
 			b2ContactHitEvent* e = ce.hitEvents + i;
@@ -221,7 +248,7 @@ int main( void )
 #endif
 	}
 
-	int sensorBegins = 0, sensorEnds = 0, hits = 0;
+	int sensorBegins = 0, sensorEnds = 0, hits = 0, contactBegins = 0, contactEnds = 0;
 	double hitSpeed = 0.0;
 	uint64_t h = 1469598103934665603ull;
 	for ( int i = 0; i < BALL_COUNT; ++i )
@@ -229,6 +256,8 @@ int main( void )
 		sensorBegins += g_balls[i].sensorBegins;
 		sensorEnds += g_balls[i].sensorEnds;
 		hits += g_balls[i].hits;
+		contactBegins += g_balls[i].contactBegins;
+		contactEnds += g_balls[i].contactEnds;
 		hitSpeed += g_balls[i].hitSpeed;
 
 		// Positions show that filtering and pre-solve changed the simulation identically
@@ -245,7 +274,8 @@ int main( void )
 	h = ( h ^ (uint64_t)g_platform.hits ) * 1099511628211ull;
 	h = ( h ^ (uint64_t)g_ground.hits ) * 1099511628211ull;
 
-	printf( "sensor begins %d, sensor ends %d, hits %d, hit speed %.4f\n", sensorBegins, sensorEnds, hits, hitSpeed );
+	printf( "sensor begins %d, sensor ends %d, hits %d, hit speed %.4f, contact begins %d, contact ends %d\n",
+			sensorBegins, sensorEnds, hits, hitSpeed, contactBegins, contactEnds );
 	printf( "state hash 0x%016llx\n", (unsigned long long)h );
 
 	b2DestroyWorld( worldId );

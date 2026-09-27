@@ -22,6 +22,8 @@ typedef struct Thing
 	int sensorEnds;
 	int hits;
 	float hitSpeed;
+	int contactBegins;
+	int contactEnds;
 } Thing;
 
 // Low-gravity team. Standard build: b2BodyDef.gravityScale. Injected build: body_forces marker.

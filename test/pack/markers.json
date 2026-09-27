@@ -5,14 +5,18 @@
     "B2_PACK_NO_SENSOR_END_ARRAY": 1,
     "B2_PACK_NO_CONTACT_HIT_ARRAY": 1,
     "B2_PACK_NO_CUSTOM_FILTER_FCN": 1,
-    "B2_PACK_NO_PRE_SOLVE_FCN": 1
+    "B2_PACK_NO_PRE_SOLVE_FCN": 1,
+    "B2_PACK_NO_CONTACT_BEGIN_ARRAY": 1,
+    "B2_PACK_NO_CONTACT_END_ARRAY": 1
   },
   "globals": [
     "void Test_SensorBegin( void* sensorData, void* visitorData );",
     "void Test_SensorEnd( void* sensorData, void* visitorData );",
     "void Test_Hit( void* dataA, void* dataB, float approachSpeed );",
     "int Test_Filter( void* dataA, void* dataB );",
-    "int Test_PreSolve( void* dataA, void* dataB, b2Manifold* manifold );"
+    "int Test_PreSolve( void* dataA, void* dataB, b2Manifold* manifold );",
+    "void Test_ContactBegin( void* dataA, void* dataB );",
+    "void Test_ContactEnd( void* dataA, void* dataB );"
   ],
   "inject": [
     {
@@ -38,6 +42,14 @@
     {
       "event": "body_gravity",
       "code": "gravityScale = Test_GravityScale( b2PackBodyUserData( world, sim ) );"
+    },
+    {
+      "event": "contact_begin",
+      "code": "Test_ContactBegin( shapeA->userData, shapeB->userData );"
+    },
+    {
+      "event": "contact_end",
+      "code": "Test_ContactEnd( shapeA->userData, shapeB->userData );"
     }
   ],
   "includes": [
