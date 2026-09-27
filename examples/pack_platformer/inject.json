@@ -1,0 +1,30 @@
+{
+  "comment": "The platformer's event rules, inlined into the engine. See platformer.h and platformer.c.",
+  "includes": [
+    "platformer.h"
+  ],
+  "defines": {
+    "B2_PACK_NO_PRE_SOLVE_FCN": 1,
+    "B2_PACK_NO_SENSOR_BEGIN_ARRAY": 1,
+    "B2_PACK_NO_CONTACT_BEGIN_ARRAY": 1,
+    "B2_PACK_NO_CONTACT_HIT_ARRAY": 1
+  },
+  "inject": [
+    {
+      "event": "pre_solve",
+      "code": "Game_PreSolve( shapeA->userData, shapeB->userData, &contactSim->manifold );"
+    },
+    {
+      "event": "sensor_begin",
+      "code": "Game_OnSensorBegin( sensorShape->userData, visitorShape->userData );"
+    },
+    {
+      "event": "contact_begin",
+      "code": "Game_OnContactBegin( shapeA->userData, shapeB->userData, contactSim->manifold.normal );"
+    },
+    {
+      "event": "contact_hit",
+      "code": "Game_OnHit( shapeA->userData, shapeB->userData, event.approachSpeed );"
+    }
+  ]
+}
