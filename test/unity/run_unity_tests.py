@@ -4,11 +4,10 @@
 """
 Integration test: Box2D-Packed as the physics backend of crust's tools/unity_pack.py.
 
-Packs test/unity/Bounce three ways (built-in physics, --physics box2d, and --physics box2d
---physics-inject), links bounce_host.c against each, and checks:
-  1. the Ball script's OnCollisionEnter2D / Exit2D counts follow Unity semantics (4 and 3) with
-     Box2D, as with the built-in physics
-  2. the injected build prints exactly what the standard Box2D build prints
+unity_pack's 2D physics is Box2D-Packed. This packs test/unity/Bounce two ways (Box2D event
+arrays, and --physics-inject), links bounce_host.c against each, and checks:
+  1. the Ball script's OnCollisionEnter2D / Exit2D counts follow Unity semantics (4 and 3)
+  2. the injected build prints exactly what the standard build prints
   3. the ball comes to rest on the ground and the 6-crate stack stands
 
 Usage: python3 test/unity/run_unity_tests.py --crust PATH   (or set CRUST_ROOT)
@@ -57,13 +56,12 @@ def main():
     unity_pack = os.path.join( args.crust, "tools", "unity_pack.py" )
 
     results = {}
-    for name, extra in ( ( "builtin", ["--physics", "builtin"] ), ( "box2d", ["--physics", "box2d"] ),
-                         ( "inject", ["--physics", "box2d", "--physics-inject"] ) ):
+    for name, extra in ( ( "box2d", [] ), ( "inject", ["--physics-inject"] ) ):
         results[name] = pack_and_run( unity_pack, os.path.join( args.build_dir, name ), extra )
         print( f"{name:8s} {results[name]}" )
 
     failures = []
-    for name in ( "builtin", "box2d", "inject" ):
+    for name in ( "box2d", "inject" ):
         ball_y, enters, stays, exits, crates = parse( results[name] )
         if ( enters, exits ) != ( 4, 3 ):
             failures.append( f"{name}: expected 4 enters and 3 exits, got {enters} and {exits}" )
