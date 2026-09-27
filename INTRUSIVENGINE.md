@@ -113,7 +113,9 @@ With an injection file, both the engine and your code are compiled with `B2_PACK
 | :---- | :---- | :---- |
 | `defines` | object | Preprocessor defines for engine and user code. `null` or a value. |
 | `cflags` | list of strings | Extra compiler flags. |
-| `globals` | string | Shorthand for an entry at `physics_world$GLOBALS`. |
+| `includes` | list of paths | Game headers, relative to the JSON file. They are included first at the globals marker, so injected code can use the game's types and `static inline` functions directly, inlined without `--lto`. |
+| `sources` | list of paths | Extra game C files, relative to the JSON file, compiled and linked with the user file. |
+| `globals` | string or list of lines | Code at the globals marker, after the includes. |
 | `inject` | list | Injection entries, applied in order. |
 | `comment` | any | Ignored. |
 
@@ -145,6 +147,7 @@ Unknown keys, unknown markers, and unknown events are errors. An unknown marker 
 | `sensor_end` | `b2PackSensorEnd$SENSOR_END` | When it stops overlapping. Single threaded, world locked. | `sensorShape`, `visitorShape` (`NULL` if the visitor was destroyed), `sensorId`, `visitorId` |
 | `custom_filter` | `b2PackCustomFilter$FILTER` | **Worker threads.** For pairs where either shape enables custom filtering, in the broad phase, sensor overlaps, and continuous collision. | `shapeA`, `shapeB` (`const b2Shape*`), `shouldCollide` (set `false` to reject the pair) |
 | `pre_solve` | `b2UpdateContact$PRE_SOLVE` | **Worker threads.** For touching contacts where either shape enables pre-solve events, when the narrow phase updates them. Recycled contacts skip the update, so pre-solve does not run for them, the same as the callback. | `world`, `shapeA`, `shapeB` (`b2Shape*`), `contactSim` (change `->manifold`, set `->manifold.pointCount = 0` to disable the contact this step) |
+| `body_gravity` | `b2PackBodyGravity$BODY_GRAVITY` | **Worker threads.** For every awake dynamic body in every substep of velocity integration, and for fast bodies in continuous collision, which removes the gravity gained during lost time. | `world`, `sim` (`const b2BodySim*`: `center`, `transform`, `invMass`), `gravityScale`, `bodyGravity` (both may be changed), `b2PackBodyUserData( world, sim )` (a cold read) |
 | `post_step` | `b2World_Step$FOOTER` | End of every step, world unlocked, events available | `world`, `worldId`, `timeStep` |
 
 These defines turn off the engine's own path when injected code replaces it:
@@ -159,7 +162,9 @@ These defines turn off the engine's own path when injected code replaces it:
 | `B2_PACK_NO_CUSTOM_FILTER_FCN` | The filter set with `b2World_SetCustomFilterCallback` is not called |
 | `B2_PACK_NO_PRE_SOLVE_FCN` | The callback set with `b2World_SetPreSolveCallback` is not called |
 
-Without an injection, the filter and pre-solve markers compile to nothing, and normal builds are unchanged: the determinism hash is identical. `python3 box2d_pack.py --list-markers` is always the current list, and marks worker-thread markers with `[WORKER THREADS]`.
+There is no body move marker. The engine writes move events in its finalize pass, but fast bodies get their final transforms later, in continuous collision, and `fellAsleep` is set later still. A marker there would give game code wrong positions for fast bodies. Read `b2World_GetBodyEvents` after the step.
+
+Without an injection, the filter, pre-solve, and gravity markers compile to nothing, and normal builds are unchanged: the determinism hash is identical. `python3 box2d_pack.py --list-markers` is always the current list, and marks worker-thread markers with `[WORKER THREADS]`.
 
 
 ## Rules for injected code
@@ -171,7 +176,8 @@ Injected code runs inside the engine, so it must follow the engine's rules.
 3. **Use what is documented in scope.** The in-scope variables are part of the marker's contract. Other engine locals and struct fields are internal and may change between versions. For game data, prefer `shape->userData`.
 4. **Do not keep engine pointers.** `shapeA`, `contactSim`, and similar pointers point into arrays that move when they grow. Use them during the injected code only. Store ids if you need something later.
 5. **Keep physics deterministic.** Reading engine state never changes the simulation. If injected code changes physics state, it must do so deterministically, or replays and cross-platform determinism break.
-6. **Keep it short.** Code at a hot marker runs inside the engine loop. Call a function for anything longer than a few lines. With `--lto`, gcc can still inline it.
+6. **Keep per-body hooks cheap.** `body_gravity` runs for every awake body in every substep. Reading game data there, through `b2PackBodyUserData`, is two cold reads per body per substep. For a value that changes rarely, such as a power-up's gravity, `b2Body_SetGravityScale` is faster: it stores the value in the engine's hot body data. Use `body_gravity` for rules computed from the body itself, such as gravity fields from `sim->center`. The platformer measures both.
+7. **Keep it short.** Code at a hot marker runs inside the engine loop. Call a function for anything longer than a few lines. With `--lto`, gcc can still inline it.
 
 ## Testing injections
 
@@ -199,8 +205,12 @@ Each injected event saves the event path: the array write during the step, the a
 | Arena brawl, `examples/pack_game` | 121 | -0.16% (74 per event) | -0.50% | 0% |
 | Bullet storm, `examples/pack_bullets` | 2,112 | -0.16% (66 per event) | -0.26% | **+0.62%** |
 | Platformer crowd pre-solve, `examples/pack_presolve` | about 40,000 contacts | -1.33% | -0.20% | **-0.84%** |
+| Platformer, `examples/pack_platformer`, event rules | pre-solve, sensors, begin, hit | -1.05% | **-2.05%** | 0% |
+| Platformer, event rules + `body_gravity` hook | same + gravity per body per substep | +0.07% | **+7.65%** | 0% |
 
 The platformer crowd replaces a pre-solve callback that runs for every touching contact every step. It is the best fit measured so far. Injection saves 1.3% of instructions and 0.84% of last-level misses: the handler reads user data while the engine holds that contact's shapes, and no game pass after the step touches the same objects. Link-time optimization (`--lto`) is a separate and larger effect, covered below.
+
+The platformer injects four rules at once: one-way platforms at `pre_solve`, coins and feathers at `sensor_begin`, stomps at `contact_begin`, and hard landings at `contact_hit`. It includes the game's header, so every rule is inlined into the engine without `--lto`. That build saves 1.05% of instructions and 2.05% of L1 data misses, and with `--lto` 3.95% and 2.06%. Moving the feather gravity into `body_gravity` as well turns that into 7.65% more L1 misses, because the hook reads cold game data for every body in every substep. Keep that rule on `b2Body_SetGravityScale`.
 
 Two lessons come from the event demos.
 
@@ -218,7 +228,8 @@ Guidelines that follow from this:
 | The handler uses engine data, such as the manifold, normal, or approach speed | Good fit. That data is hot at the marker. |
 | The handler only records something small, such as a counter, a flag, or an id in a queue | Good fit. Little game data is pulled into the step. |
 | The game does follow-up work on the same objects after the step | Weak or negative. Keep that work together, or queue ids and do it all after the step. |
-| Game logic called through a function pointer per pair or contact (`custom_filter`, `pre_solve`) | Good fit, with `--lto`. The indirect call is removed. It is still worker-thread code. |
+| Game logic called through a function pointer per pair or contact (`custom_filter`, `pre_solve`) | Good fit. The indirect call and user data lookups are removed. It is still worker-thread code. |
+| Per-body, per-substep logic that reads game data (`body_gravity` with `b2PackBodyUserData`) | Poor fit. Store the value in the engine with the API instead. |
 
 ### Link-time optimization
 
@@ -248,7 +259,7 @@ Markers are cheap to add and inert in normal builds. To add one to the engine:
 
 ## Roadmap
 
-Done: sensor begin and end, hit events, custom filter, and pre-solve markers, with equivalence tests, and the bullet storm and platformer crowd benchmarks.
+Done: sensor begin and end, hit events, custom filter, pre-solve, and body gravity markers, with equivalence tests. Game headers and sources in injection files. The bullet storm, platformer crowd, and platformer benchmarks.
 
 - **Hardware measurement.** Time and hardware counters on real multi-core machines, where prefetching and larger caches may change the balance measured above.
 - **Worker-thread tests.** Run the equivalence test with several workers, to check injected filter and pre-solve code under real concurrency.

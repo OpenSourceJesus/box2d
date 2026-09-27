@@ -31,6 +31,8 @@ Injection JSON:
     {
       "defines": { "B2_PACK_NO_CONTACT_BEGIN_ARRAY": 1 },
       "cflags":  [ "-march=native" ],
+      "includes": [ "game.h" ],
+      "sources":  [ "game_logic.c" ],
       "globals": "void Game_OnBegin( void* a, void* b );",
       "inject": [
         { "event": "contact_begin",
@@ -44,6 +46,10 @@ Each injection names its target with "marker", "event", or "function" + "point".
 from "code" (a string, or a list of lines) or "code_file" (relative to the JSON file).
 Function-body markers get the code wrapped in braces. GLOBALS markers get it verbatim at
 file scope, which is where to declare user functions and externs.
+
+"includes" lists game headers, relative to the JSON file. They are included at the globals marker,
+so injected code can use the game's types and static inline functions directly, with no call and
+no need for --lto. "sources" lists extra game C files to compile and link with usercode.c.
 
 Both the engine and the user code are compiled with B2_PACK_INJECTED=1 when an injection
 file is given, so user code can tell which mode it was built in.
@@ -85,6 +91,7 @@ EVENTS = {
     "sensor_end": "b2PackSensorEnd$SENSOR_END",
     "custom_filter": "b2PackCustomFilter$FILTER",
     "pre_solve": "b2UpdateContact$PRE_SOLVE",
+    "body_gravity": "b2PackBodyGravity$BODY_GRAVITY",
 }
 
 # //$scope$POINT on a line of its own
@@ -126,6 +133,8 @@ class InjectionSpec:
     defines: dict
     cflags: list
     path: str = None
+    sources: list = dataclasses.field( default_factory=list )
+    include_dirs: list = dataclasses.field( default_factory=list )
 
 
 @dataclasses.dataclass
@@ -226,7 +235,7 @@ def load_injections( path ):
     if not isinstance( data, dict ):
         raise BuildError( f"{path}: top level must be an object" )
 
-    known = { "inject", "globals", "defines", "cflags", "comment" }
+    known = { "inject", "globals", "includes", "sources", "defines", "cflags", "comment" }
     unknown = set( data ) - known
     if unknown:
         raise BuildError( f"{path}: unknown keys {sorted( unknown )}, expected some of {sorted( known )}" )
@@ -234,6 +243,26 @@ def load_injections( path ):
     base_dir = os.path.dirname( os.path.abspath( path ) )
     name = os.path.basename( path )
     injections = []
+
+    def path_list( key ):
+        items = data.get( key, [] )
+        if not isinstance( items, list ) or not all( isinstance( i, str ) for i in items ):
+            raise BuildError( f"{path}: '{key}' must be a list of file paths" )
+        resolved = []
+        for item in items:
+            full = os.path.abspath( os.path.join( base_dir, item ) )
+            if not os.path.isfile( full ):
+                raise BuildError( f"{path}: {key} file not found: {item}" )
+            resolved.append( full )
+        return resolved
+
+    # Game headers go first in the globals marker, so every injection can use the game's types
+    # and static inline functions
+    includes = path_list( "includes" )
+    if includes:
+        code = "\n".join( f'#include "{inc}"' for inc in includes )
+        injections.append( Injection( EVENTS["globals"], code, f"{name}:includes" ) )
+    sources = path_list( "sources" )
 
     if "globals" in data:
         code, origin = _code_text( { "code": data["globals"] }, base_dir, f"{name}: globals" )
@@ -257,7 +286,7 @@ def load_injections( path ):
     if not isinstance( cflags, list ) or not all( isinstance( c, str ) for c in cflags ):
         raise BuildError( f"{path}: 'cflags' must be a list of strings" )
 
-    return InjectionSpec( injections, defines, cflags, os.path.abspath( path ) )
+    return InjectionSpec( injections, defines, cflags, os.path.abspath( path ), sources, [base_dir] )
 
 
 def apply_injections( files, markers, injections ):
@@ -439,7 +468,12 @@ def build(
     if usercode is not None:
         exe = os.path.abspath( out ) if out else os.path.join( build_dir, "box2d" )
         user_flags = common + ["-Wall"]
-        link = [cc] + user_flags + [os.path.abspath( usercode ), lib, "-o", exe, "-lm", "-lpthread"]
+        extra_sources = []
+        if spec is not None:
+            for d in spec.include_dirs:
+                user_flags += ["-I", d]
+            extra_sources = spec.sources
+        link = [cc] + user_flags + [os.path.abspath( usercode )] + extra_sources + [lib, "-o", exe, "-lm", "-lpthread"]
         _run( link + list( ldflags or [] ), verbose )
         result.exe = exe
 

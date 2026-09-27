@@ -304,6 +304,7 @@ Injection file:
 | `sensor_end` | `b2PackSensorEnd$SENSOR_END` | single | `sensorShape`, `visitorShape` (`NULL` if destroyed), ids |
 | `custom_filter` | `b2PackCustomFilter$FILTER` | **workers** | `shapeA`, `shapeB`, `shouldCollide` |
 | `pre_solve` | `b2UpdateContact$PRE_SOLVE` | **workers** | `world`, `shapeA`, `shapeB`, `contactSim->manifold` |
+| `body_gravity` | `b2PackBodyGravity$BODY_GRAVITY` | **workers** | `world`, `sim`, `gravityScale`, `bodyGravity` |
 
 `B2_PACK_NO_*` defines turn off the engine's own event arrays and callbacks when injected code replaces them. See [INTRUSIVENGINE.md](INTRUSIVENGINE.md) for the list, the threading rules, and `test/pack/run_pack_tests.py`, which checks that every marker behaves exactly like the API it replaces.
 
@@ -345,6 +346,29 @@ With 17 times the arena's event rate, the instruction saving stays at 0.16%, abo
 | Injected + `--lto` | -6.77% | -0.20% | -0.92% |
 
 Injection removes the callback wrapper and two `b2Shape_GetUserData` lookups per contact. That saves about 1% of instructions, with or without `--lto`, and lowers last-level misses. The handler reads user data while the engine holds that contact's shapes, and no game pass after the step touches the same objects. Link-time optimization is the larger, separate effect: compiling the engine and game as one program saves 5.9% of instructions even without injection.
+
+### Demo: platformer (`examples/pack_platformer`)
+
+1,500 AI runners race across a level of one-way platforms. They collect coins and feathers, which grant low gravity, stomp patrolling enemies or get hurt by them, and take hard landings. The rules are `static inline` functions in `platformer.h`. `inject.json` includes that header and injects four of them, so they run inline inside the engine:
+
+| Rule | Standard build | Injected at |
+| :---- | :---- | :---- |
+| One-way platforms | pre-solve callback | `pre_solve` |
+| Coins and feathers | sensor begin events | `sensor_begin` |
+| Stomp or get hurt | contact begin events + `b2Contact_GetData` | `contact_begin` |
+| Hard landings | hit events | `contact_hit` |
+
+Feather gravity uses `b2Body_SetGravityScale` in both builds. All variants print the same checksum. Cachegrind, 300 steps:
+
+| Build | Instructions | L1 data misses | Last-level data misses |
+| :---- | ----: | ----: | ----: |
+| Standard | baseline | baseline | baseline |
+| Standard + `--lto` | -3.24% | -0.02% | -0.05% |
+| Injected | -1.05% | **-2.05%** | +0.01% |
+| Injected + `--lto` | -3.95% | **-2.06%** | -0.06% |
+| Injected, gravity in `body_gravity` too | +0.07% | **+7.65%** | +0.01% |
+
+Injecting the event rules cuts L1 data misses 2%, the largest injection gain measured so far, and it holds on top of `--lto`. `inject_gravity_hook.json` also moves the feather gravity into the `body_gravity` marker, and that costs more than all the event rules save. The hook reads cold game data for every body in every substep, while `b2Body_SetGravityScale` stores the value in the engine's hot body data. Inject event handlers. Keep per-body, per-substep hooks for rules that need no game data.
 
 # Box2D 
 
