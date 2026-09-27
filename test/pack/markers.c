@@ -15,23 +15,7 @@
 #define B2_PACK_INJECTED 0
 #endif
 
-typedef enum Kind
-{
-	KIND_BALL,
-	KIND_PLATFORM,
-	KIND_PICKUP,
-	KIND_GROUND,
-} Kind;
-
-typedef struct Thing
-{
-	Kind kind;
-	int team;
-	int sensorBegins;
-	int sensorEnds;
-	int hits;
-	float hitSpeed;
-} Thing;
+#include "markers_game.h"
 
 enum
 {
@@ -201,6 +185,10 @@ int main( void )
 		g_balls[i].team = i % 3;
 		bodyDef.position = (b2Pos){ Rand( -35.0f, 35.0f ), Rand( 2.0f, 40.0f ) };
 		bodyDef.linearVelocity = (b2Vec2){ Rand( -5.0f, 5.0f ), Rand( -5.0f, 12.0f ) };
+		bodyDef.userData = g_balls + i;
+#if B2_PACK_INJECTED == 0
+		bodyDef.gravityScale = Test_GravityScale( g_balls + i );
+#endif
 		g_ballBodies[i] = b2CreateBody( worldId, &bodyDef );
 		ballDef.userData = g_balls + i;
 		b2CreateCircleShape( g_ballBodies[i], &ballDef, &circle );

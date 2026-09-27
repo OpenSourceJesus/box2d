@@ -15,11 +15,32 @@
     "int Test_PreSolve( void* dataA, void* dataB, b2Manifold* manifold );"
   ],
   "inject": [
-    { "event": "sensor_begin", "code": "Test_SensorBegin( sensorShape->userData, visitorShape->userData );" },
-    { "event": "sensor_end",
-      "code": "Test_SensorEnd( sensorShape->userData, visitorShape != NULL ? visitorShape->userData : NULL );" },
-    { "event": "contact_hit", "code": "Test_Hit( shapeA->userData, shapeB->userData, event.approachSpeed );" },
-    { "event": "custom_filter", "code": "shouldCollide = Test_Filter( shapeA->userData, shapeB->userData ) != 0;" },
-    { "event": "pre_solve", "code": "Test_PreSolve( shapeA->userData, shapeB->userData, &contactSim->manifold );" }
+    {
+      "event": "sensor_begin",
+      "code": "Test_SensorBegin( sensorShape->userData, visitorShape->userData );"
+    },
+    {
+      "event": "sensor_end",
+      "code": "Test_SensorEnd( sensorShape->userData, visitorShape != NULL ? visitorShape->userData : NULL );"
+    },
+    {
+      "event": "contact_hit",
+      "code": "Test_Hit( shapeA->userData, shapeB->userData, event.approachSpeed );"
+    },
+    {
+      "event": "custom_filter",
+      "code": "shouldCollide = Test_Filter( shapeA->userData, shapeB->userData ) != 0;"
+    },
+    {
+      "event": "pre_solve",
+      "code": "Test_PreSolve( shapeA->userData, shapeB->userData, &contactSim->manifold );"
+    },
+    {
+      "event": "body_gravity",
+      "code": "gravityScale = Test_GravityScale( b2PackBodyUserData( world, sim ) );"
+    }
+  ],
+  "includes": [
+    "markers_game.h"
   ]
 }
