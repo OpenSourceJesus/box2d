@@ -372,19 +372,19 @@ Injecting the event rules cuts L1 data misses 2%, the largest injection gain mea
 
 ## **6\. unity_pack Physics Backend (`box2d_unity.py`)**
 
-crust's [`tools/unity_pack.py`](https://github.com/brentharts/crust) packs a Unity-shaped project (C# scripts and `.unity` scenes) into C. `box2d_unity.py` makes Box2D-Packed its 2D physics:
+crust's [`tools/unity_pack.py`](https://github.com/brentharts/crust) packs a Unity-shaped project (C# scripts and `.unity` scenes) into C. Its 2D physics is Box2D-Packed, through `box2d_unity.py`. unity_pack finds this checkout through `--box2d PATH`, `$BOX2D_PACKED_ROOT`, or a `box2d` directory beside crust:
 
 ```sh
-python3 tools/unity_pack.py <project> -o /tmp/out --physics box2d --box2d /path/to/box2d
-python3 tools/unity_pack.py <project> -o /tmp/out --physics box2d --physics-inject --box2d /path/to/box2d
+python3 tools/unity_pack.py <project> -o /tmp/out
+python3 tools/unity_pack.py <project> -o /tmp/out --physics-inject --box2d /path/to/box2d
 ```
 
-- `box2d_unity.py` generates `physics_box2d.c` from unity_pack's Rigidbody2D and Collider2D tables. Each fixed step, it pushes script changes into the Box2D world, steps it, and pulls positions and velocities back.
+- `box2d_unity.py` generates `physics_box2d.c` from unity_pack's Rigidbody2D and Collider2D tables. Each fixed step, it creates bodies for new Rigidbody2D components (including `AddComponent<Rigidbody2D>`), pushes script changes into the Box2D world, steps it, and pulls positions and velocities back.
 - unity_pack keeps sending `OnCollisionEnter2D` / `Stay2D` / `Exit2D` after the step, from Box2D's touching pairs.
 - `--physics-inject` records those pairs at the `contact_begin` and `contact_end` injection markers instead of the event arrays.
 - Friction and bounciness combine as in Unity, through Box2D's material callbacks. Triggers become sensors. Body rotation is locked, because packed rigidbodies have no rotation yet.
 
-`test/unity/run_unity_tests.py --crust PATH` packs `test/unity/Bounce` (a ball bouncing three times and a stack of six crates) with the built-in physics, Box2D, and Box2D injected. All three give Unity's 4 Enter and 3 Exit messages, and the injected build matches the standard Box2D build exactly.
+`test/unity/run_unity_tests.py --crust PATH` packs `test/unity/Bounce` (a ball bouncing three times and a stack of six crates) with Box2D event arrays and with `--physics-inject`. Both give Unity's 4 Enter and 3 Exit messages, and the injected build matches the standard build exactly. Before unity_pack's own 2D physics was removed, it gave the same 4 Enter and 3 Exit.
 
 This integration found a bug in the `contact_end` marker. When a fast body leaves a contact, Box2D destroys the contact instead of reporting that it stopped touching, and that path had no marker. Both paths now go through one hook, `b2PackContactEnd`, and `test/pack/markers.c` checks contact begin and end counts.
 
