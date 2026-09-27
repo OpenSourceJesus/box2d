@@ -1,5 +1,8 @@
 # Box2D-Packed
 
+"From C# Scripts to Packed C Zero-Indirection Physics: A Cache-Optimized 2D Game Engine Architecture with Intrusive Execution"
+- https://doi.org/10.5281/zenodo.23002562 
+
 ## Game-Side & API Performance: Faster Handle Operations
 
 By removing world0 and shrinking index1 to uint16_t, we reduce b2ShapeId from 8 bytes to 4 bytes (32 bits total).
