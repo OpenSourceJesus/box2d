@@ -1,0 +1,8 @@
+{
+  "comment": "Run the platformer crowd's pre-solve logic at the marker. See presolve.c. Worker threads.",
+  "defines": { "B2_PACK_NO_PRE_SOLVE_FCN": 1 },
+  "globals": "void Game_PreSolve( const void* userDataA, const void* userDataB, b2Manifold* manifold );",
+  "inject": [
+    { "event": "pre_solve", "code": "Game_PreSolve( shapeA->userData, shapeB->userData, &contactSim->manifold );" }
+  ]
+}
