@@ -34,9 +34,11 @@
   xrightmargin=4pt,
 }
 
-\title{Box2D-Packed: A Cache-Oriented 2D Physics Engine\\with Game Code Compiled Into the Engine}
+
+\title{From C\# Scripts to Packed C Zero-Indirection Physics: \\
+A Cache-Optimized 2D Game Engine Architecture with Intrusive Execution}
 \author{Brent S. Hartshorn \orcidlink{0009-0004-2853-655X}, and Gilead Cosman}
-\date{}
+
 
 \begin{document}
 \maketitle
@@ -343,14 +345,6 @@ worse. Moving the simplex cache reached the same size without these costs.
 \section{The Intrusive Engine}
 \label{sec:intrusive}
 
-\subsection{Pipeline}
-
-The engine sources contain marker comments of the form \code{//$scope$POINT} on lines of their
-own. A normal build ignores them. The script \code{box2d_pack.py} copies the sources, replaces
-markers in the copies with C code described by a JSON file, and compiles the engine and the game
-together (Figure~\ref{fig:pipeline}). Compiler errors point at the JSON entry, not the patched copy,
-and the game's own headers can be included, so injected code can use the game's types and inline
-functions directly.
 
 \begin{figure}[ht]
 \centering
@@ -376,6 +370,15 @@ functions directly.
 \caption{The intrusive engine build pipeline.}
 \label{fig:pipeline}
 \end{figure}
+\subsection{Pipeline}
+
+The engine sources contain marker comments of the form \code{//$scope$POINT} on lines of their
+own. A normal build ignores them. The script \code{box2d_pack.py} copies the sources, replaces
+markers in the copies with C code described by a JSON file, and compiles the engine and the game
+together (Figure~\ref{fig:pipeline}). Compiler errors point at the JSON entry, not the patched copy,
+and the game's own headers can be included, so injected code can use the game's types and inline
+functions directly.
+
 
 A one-way platform, for example, is injected as follows. The game's rule is a \code{static inline}
 function in its own header, and the pre-solve marker calls it with the two shapes the engine is
