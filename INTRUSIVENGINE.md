@@ -141,7 +141,7 @@ Unknown keys, unknown markers, and unknown events are errors. An unknown marker 
 | `globals` | `pack_hooks$GLOBALS` | File scope of `src/pack_hooks.h`, which every engine file with markers includes | Declarations only. Declare your functions and `extern` variables here. A definition would be duplicated in each file. |
 | `pre_step` | `b2World_Step$HEADER` | Start of every step, world unlocked | `world`, `worldId`, `timeStep`, `subStepCount` |
 | `contact_begin` | `b2Collide$CONTACT_BEGIN` | When two shapes with contact events enabled start touching. Single threaded, world locked. | `shapeA`, `shapeB` (`const b2Shape*`, use `->userData`), `shapeIdA`, `shapeIdB`, `contactFullId`, `contactSim->manifold` |
-| `contact_end` | `b2Collide$CONTACT_END` | When they stop touching. Single threaded, world locked. | `shapeA`, `shapeB`, `shapeIdA`, `shapeIdB`, `contactFullId` |
+| `contact_end` | `b2PackContactEnd$CONTACT_END` | Wherever a touching contact ends: when shapes stop touching, and when a contact is destroyed because bounding boxes separated or a body or shape was destroyed, disabled, or refiltered. Single threaded. Usually inside the step with the world locked, but also inside calls such as `b2DestroyBody`. | `shapeA`, `shapeB`, `shapeIdA`, `shapeIdB`, `contactFullId` |
 | `contact_hit` | `b2Solve$CONTACT_HIT` | For each hit event (approach speed above the world's hit threshold). Single threaded, world locked. | `shapeA`, `shapeB` (`b2Shape*`), `event` (`b2ContactHitEvent`: `point`, `normal`, `approachSpeed`, ids) |
 | `sensor_begin` | `b2PackSensorBegin$SENSOR_BEGIN` | When a shape starts overlapping a sensor. Single threaded, world locked. | `sensorShape`, `visitorShape` (`const b2Shape*`), `sensorId`, `visitorId` |
 | `sensor_end` | `b2PackSensorEnd$SENSOR_END` | When it stops overlapping. Single threaded, world locked. | `sensorShape`, `visitorShape` (`NULL` if the visitor was destroyed), `sensorId`, `visitorId` |
@@ -256,6 +256,10 @@ Markers are cheap to add and inert in normal builds. To add one to the engine:
 4. **Consider an array guard.** If the marker replaces an event array, guard the array write with a `B2_PACK_NO_...` define, as the contact markers do.
 5. **Add an event alias** in `EVENTS` in `box2d_pack.py` if the point is generally useful.
 6. **Test both builds.** A normal CMake build must not change, and the unit tests must pass. An injected build of a small program that uses the marker must compile and produce the same results as the standard API.
+
+## unity_pack
+
+crust's `tools/unity_pack.py` packs a Unity-shaped project into C. With `--physics box2d`, `box2d_unity.py` generates its 2D physics on Box2D-Packed, and with `--physics-inject`, touching pairs are recorded at the `contact_begin` and `contact_end` markers. The injected code only records the pair, so Unity scripts still run after the step. This follows the "record little" guideline above. `test/unity/run_unity_tests.py` checks it end to end.
 
 ## Roadmap
 

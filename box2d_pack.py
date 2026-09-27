@@ -85,7 +85,7 @@ EVENTS = {
     "pre_step": "b2World_Step$HEADER",
     "post_step": "b2World_Step$FOOTER",
     "contact_begin": "b2Collide$CONTACT_BEGIN",
-    "contact_end": "b2Collide$CONTACT_END",
+    "contact_end": "b2PackContactEnd$CONTACT_END",
     "contact_hit": "b2Solve$CONTACT_HIT",
     "sensor_begin": "b2PackSensorBegin$SENSOR_BEGIN",
     "sensor_end": "b2PackSensorEnd$SENSOR_END",

@@ -298,7 +298,7 @@ Injection file:
 | `pre_step` | `b2World_Step$HEADER` | main | `world`, `worldId`, `timeStep`, `subStepCount`. The world is unlocked. |
 | `post_step` | `b2World_Step$FOOTER` | main | `world`, `worldId`, `timeStep`. The world is unlocked. |
 | `contact_begin` | `b2Collide$CONTACT_BEGIN` | single | `shapeA`, `shapeB` (with `->userData`), shape ids, `contactFullId`, `contactSim->manifold` |
-| `contact_end` | `b2Collide$CONTACT_END` | single | `shapeA`, `shapeB`, shape ids, `contactFullId` |
+| `contact_end` | `b2PackContactEnd$CONTACT_END` | single | `shapeA`, `shapeB`, shape ids, `contactFullId` |
 | `contact_hit` | `b2Solve$CONTACT_HIT` | single | `shapeA`, `shapeB`, `event` (point, normal, approach speed) |
 | `sensor_begin` | `b2PackSensorBegin$SENSOR_BEGIN` | single | `sensorShape`, `visitorShape`, ids |
 | `sensor_end` | `b2PackSensorEnd$SENSOR_END` | single | `sensorShape`, `visitorShape` (`NULL` if destroyed), ids |
@@ -369,6 +369,24 @@ Feather gravity uses `b2Body_SetGravityScale` in both builds. All variants print
 | Injected, gravity in `body_gravity` too | +0.07% | **+7.65%** | +0.01% |
 
 Injecting the event rules cuts L1 data misses 2%, the largest injection gain measured so far, and it holds on top of `--lto`. `inject_gravity_hook.json` also moves the feather gravity into the `body_gravity` marker, and that costs more than all the event rules save. The hook reads cold game data for every body in every substep, while `b2Body_SetGravityScale` stores the value in the engine's hot body data. Inject event handlers. Keep per-body, per-substep hooks for rules that need no game data.
+
+## **6\. unity_pack Physics Backend (`box2d_unity.py`)**
+
+crust's [`tools/unity_pack.py`](https://github.com/brentharts/crust) packs a Unity-shaped project (C# scripts and `.unity` scenes) into C. `box2d_unity.py` makes Box2D-Packed its 2D physics:
+
+```sh
+python3 tools/unity_pack.py <project> -o /tmp/out --physics box2d --box2d /path/to/box2d
+python3 tools/unity_pack.py <project> -o /tmp/out --physics box2d --physics-inject --box2d /path/to/box2d
+```
+
+- `box2d_unity.py` generates `physics_box2d.c` from unity_pack's Rigidbody2D and Collider2D tables. Each fixed step, it pushes script changes into the Box2D world, steps it, and pulls positions and velocities back.
+- unity_pack keeps sending `OnCollisionEnter2D` / `Stay2D` / `Exit2D` after the step, from Box2D's touching pairs.
+- `--physics-inject` records those pairs at the `contact_begin` and `contact_end` injection markers instead of the event arrays.
+- Friction and bounciness combine as in Unity, through Box2D's material callbacks. Triggers become sensors. Body rotation is locked, because packed rigidbodies have no rotation yet.
+
+`test/unity/run_unity_tests.py --crust PATH` packs `test/unity/Bounce` (a ball bouncing three times and a stack of six crates) with the built-in physics, Box2D, and Box2D injected. All three give Unity's 4 Enter and 3 Exit messages, and the injected build matches the standard Box2D build exactly.
+
+This integration found a bug in the `contact_end` marker. When a fast body leaves a contact, Box2D destroys the contact instead of reporting that it stopped touching, and that path had no marker. Both paths now go through one hook, `b2PackContactEnd`, and `test/pack/markers.c` checks contact begin and end counts.
 
 # Box2D 
 
