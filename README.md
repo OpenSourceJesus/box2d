@@ -390,6 +390,21 @@ python3 tools/unity_pack.py <project> -o /tmp/out --physics-inject --box2d /path
 
 `test/unity/run_unity_tests.py --crust PATH` packs `test/unity/Bounce` (a ball bouncing three times and a stack of six crates) with Box2D event arrays and with `--physics-inject`. Both give Unity's 4 Enter and 3 Exit messages, and the injected build matches the standard build exactly. Before unity_pack's own 2D physics was removed, it gave the same 4 Enter and 3 Exit.
 
+### Godot mode (`godot_pack`)
+
+crust's [`tools/godot_pack.py`](https://github.com/brentharts/crust) packs a Godot 4 project (`.tscn` scenes and C# node scripts) through the same back end and the same tables: a `RigidBody2D`, `CharacterBody2D`, `AnimatableBody2D`, `StaticBody2D` or `Area2D` with its `CollisionShape2D` and `PhysicsMaterial` becomes a Rigidbody2D / Collider2D row. `emit_glue( outdir, plan, mode="godot" )` generates the glue with Godot's meaning for those tables; the step, body creation, script pushes and contact pairs are shared with Unity mode, whose output is unchanged:
+
+```sh
+python3 tools/godot_pack.py <godot project> -o /tmp/out --box2d /path/to/box2d
+```
+
+- **Units.** The world is Godot's: pixels, y down, gravity from `project.godot` (980 px/s² down by default). `b2SetLengthUnitsPerMeter` scales Box2D's tolerances and default speeds to pixels, before any `b2Default*Def` reads them (`length_units_per_meter`, 64 by default; `[godot_pack] length_units_per_meter` in the project).
+- **Materials.** Godot's rules, from `godot_body_pair_2d.cpp`: friction `|min(a, b)|`, bounce `clamp(a + b, 0, 1)`, with a `rough` material's friction and an `absorbent` material's bounce counted negative, so rough wins and absorbent subtracts. The flags travel in `userMaterialId`, where Unity mode carries its combine modes.
+- **Damping.** Godot damps once a step, `v *= max(0, 1 - dt * d)`; Box2D once a substep, `v *= 1 / (1 + h * c)`. The glue sets the `c` whose substeps compound to Godot's factor exactly.
+- **Step.** 1/60 s (Godot's 60 physics ticks) when unset.
+
+`test/godot/run_godot_tests.py --crust PATH` packs `test/godot/Bounce`, a Godot project, with event arrays and with `--physics-inject`, and checks it against Godot's rules: a ball of bounce 0.5 on a plain floor rebounds to 0.25 of its drop (Unity's average would give 0.0625), one on an absorbent 0.3 pad to 0.04 (0.64 if absorbent were ignored), a body with `linear_damp` 2 keeps `100 (1 - 2/60)^60` px/s after a second, first contacts come when free fall at 980 px/s² says, six instanced crates stand in pixel units, and the injected build prints exactly what the standard build prints.
+
 This integration found a bug in the `contact_end` marker. When a fast body leaves a contact, Box2D destroys the contact instead of reporting that it stopped touching, and that path had no marker. Both paths now go through one hook, `b2PackContactEnd`, and `test/pack/markers.c` checks contact begin and end counts.
 
 # Box2D 
