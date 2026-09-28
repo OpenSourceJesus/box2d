@@ -29,6 +29,14 @@ engine.c exports what the glue needs, in unity_pack's C subset:
     void engine_col2d_center( int ci, float* x, float* y );  collider world center
     void engine_col2d_contact( int a, int b );               report a touching pair
 
+With plan["physics2d_live"] (unity_pack sets it when some GameObjects can leave the simulation,
+e.g. scenes that are not loaded) it also exports
+
+    int engine_rb2d_live( int rb );                          owner in the simulation
+    int engine_col2d_live( int ci );                         static collider in the simulation
+
+and bodies whose owner is not live are disabled (b2Body_Disable) until it is again.
+
 Mapping:
     Rigidbody2D Dynamic / Kinematic / Static  ->  b2_dynamicBody / kinematic / static, rotation
                                                   locked (unity_pack has no rigidbody rotation)
@@ -111,6 +119,8 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
         SUB_STEPS=int( sub_steps ),
         **_mode_parts( mode, length_units_per_meter ),
     )
+    if plan.get( "physics2d_live" ):
+        glue = _with_live_gate( glue )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -184,6 +194,36 @@ def build_library( outdir, inject=False, lto=False, box2d_root=None, verbose=Fal
     return result.lib, include_dir, defines
 
 
+def _with_live_gate( glue ):
+    """Glue that disables the bodies of GameObjects engine.c reports as not live."""
+    edits = (
+        ( "void engine_col2d_contact( int a, int b );\n",
+          "void engine_col2d_contact( int a, int b );\n" + LIVE_EXPORTS ),
+        ( "static int b2u_pair_n;\n", "static int b2u_pair_n;\n" + LIVE_STATE ),
+        ( "\t\tb2BodyId bodyId = b2CreateBody( b2u_world, &def );\n"
+          "\t\tb2u_add_shape( bodyId, ci, b2Vec2_zero );\n",
+          "\t\tb2BodyId bodyId = b2CreateBody( b2u_world, &def );\n"
+          "\t\tb2u_add_shape( bodyId, ci, b2Vec2_zero );\n"
+          "\t\tb2u_col_on[ci] = 1;\n" ),
+        ( "\t\tb2u_create_body( b2u_rb_created );\n",
+          "\t\tb2u_create_body( b2u_rb_created );\n"
+          "\t\tb2u_rb_on[b2u_rb_created] = 1;\n" ),
+        ( "\t/* Push what scripts may have changed since the last step */\n",
+          LIVE_SYNC + "\n\t/* Push what scripts may have changed since the last step */\n" ),
+        ( "\t\tb2BodyId bodyId = b2u_rb_body[rb];\n\t\tfloat x, y;\n",
+          "\t\tif ( b2u_rb_on[rb] == 0 )\n\t\t\tcontinue;\n"
+          "\t\tb2BodyId bodyId = b2u_rb_body[rb];\n\t\tfloat x, y;\n" ),
+        ( "\t\tb2BodyId bodyId = b2u_rb_body[rb];\n\t\tb2Pos p = b2Body_GetPosition( bodyId );\n",
+          "\t\tif ( b2u_rb_on[rb] == 0 )\n\t\t\tcontinue;\n"
+          "\t\tb2BodyId bodyId = b2u_rb_body[rb];\n\t\tb2Pos p = b2Body_GetPosition( bodyId );\n" ),
+    )
+    for old, new in edits:
+        if glue.count( old ) != 1:
+            raise ValueError( "box2d_unity: live gate anchor not found: %r" % old[:60] )
+        glue = glue.replace( old, new )
+    return glue
+
+
 def _write_if_different( path, text ):
     try:
         with open( path, encoding="utf-8" ) as f:
@@ -209,6 +249,75 @@ extern const float _Collider2D_friction[];
 extern const float _Collider2D_bounciness[];
 extern const int _Collider2D_friction_combine[];
 extern const int _Collider2D_bounce_combine[];
+"""
+
+LIVE_EXPORTS = """int engine_rb2d_live( int rb );
+int engine_col2d_live( int ci );
+"""
+
+LIVE_STATE = """
+/* Which bodies are in the simulation (engine_rb2d_live / engine_col2d_live) */
+static int b2u_rb_on[B2U_MAX_RB];
+static int b2u_col_on[B2U_MAX_COL];
+
+/* A disabled body's contacts are gone: forget its touching pairs */
+static void b2u_drop_pairs( int rb, int ci )
+{
+	int k = 0;
+	for ( int i = 0; i < b2u_pair_n; ++i )
+	{
+		int a = b2u_pair_a[i], b = b2u_pair_b[i];
+		int hit = a == ci || b == ci;
+		if ( rb >= 0 )
+		{
+			hit = hit || ( a < _Collider2D_count && _Collider2D_rb2d[a] == rb ) ||
+				  ( b < _Collider2D_count && _Collider2D_rb2d[b] == rb );
+		}
+		if ( hit )
+			continue;
+		b2u_pair_a[k] = a;
+		b2u_pair_b[k] = b;
+		k += 1;
+	}
+	b2u_pair_n = k;
+}
+"""
+
+LIVE_SYNC = """\t/* Bodies of GameObjects that left or rejoined the simulation */
+\tfor ( int rb = 0; rb < b2u_rb_created; ++rb )
+\t{
+\t\tint on = engine_rb2d_live( rb ) != 0;
+\t\tif ( on == b2u_rb_on[rb] )
+\t\t\tcontinue;
+\t\tb2u_rb_on[rb] = on;
+\t\tif ( on )
+\t\t{
+\t\t\tb2Body_Enable( b2u_rb_body[rb] );
+\t\t}
+\t\telse
+\t\t{
+\t\t\tb2Body_Disable( b2u_rb_body[rb] );
+\t\t\tb2u_drop_pairs( rb, -1 );
+\t\t}
+\t}
+\tfor ( int ci = 0; ci < _Collider2D_count && ci < B2U_MAX_COL; ++ci )
+\t{
+\t\tif ( b2u_col_has_body[ci] == 0 )
+\t\t\tcontinue;
+\t\tint on = engine_col2d_live( ci ) != 0;
+\t\tif ( on == b2u_col_on[ci] )
+\t\t\tcontinue;
+\t\tb2u_col_on[ci] = on;
+\t\tif ( on )
+\t\t{
+\t\t\tb2Body_Enable( b2u_col_body[ci] );
+\t\t}
+\t\telse
+\t\t{
+\t\t\tb2Body_Disable( b2u_col_body[ci] );
+\t\t\tb2u_drop_pairs( -1, ci );
+\t\t}
+\t}
 """
 
 GLUE_TEMPLATE = r"""/* Generated by box2d_unity.py for {PACKER}. Do not edit. */
@@ -257,6 +366,10 @@ static b2WorldId b2u_world;
 static b2BodyId b2u_rb_body[B2U_MAX_RB];
 static float b2u_last_x[B2U_MAX_RB];
 static float b2u_last_y[B2U_MAX_RB];
+
+/* Static bodies of the colliders without a Rigidbody2D */
+static b2BodyId b2u_col_body[B2U_MAX_COL];
+static int b2u_col_has_body[B2U_MAX_COL];
 
 /* Touching collider pairs, lo < hi, maintained from contact begin and end */
 static int b2u_pair_a[B2U_MAX_PAIRS];
@@ -401,6 +514,8 @@ static void b2u_create( void )
 		def.position = (b2Pos){{ x, y }};
 		b2BodyId bodyId = b2CreateBody( b2u_world, &def );
 		b2u_add_shape( bodyId, ci, b2Vec2_zero );
+		b2u_col_body[ci] = bodyId;
+		b2u_col_has_body[ci] = 1;
 	}}
 
 	b2u_rb_created = 0;
