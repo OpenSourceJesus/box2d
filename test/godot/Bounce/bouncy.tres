@@ -1,4 +1,4 @@
-[gd_resource type="PhysicsMaterial" format=3 uid="uid://b2gbouncy00001"]
+[gd_resource type="PhysicsMaterial" format=3]
 
 [resource]
 bounce = 0.5
