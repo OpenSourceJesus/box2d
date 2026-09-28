@@ -41,6 +41,7 @@ Mapping:
     Rigidbody2D Dynamic / Kinematic / Static  ->  b2_dynamicBody / kinematic / static, rotation
                                                   locked (unity_pack has no rigidbody rotation)
     BoxCollider2D / CircleCollider2D          ->  offset box / circle, rotated by the collider
+    CapsuleCollider2D                         ->  capsule along m_Direction (circle when short)
     Collider2D without a Rigidbody2D          ->  static body at the collider center
     m_IsTrigger                               ->  sensor, no collision messages
     Rigidbody2D mass                          ->  body mass
@@ -441,10 +442,21 @@ static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )
 	def.enableContactEvents = _Collider2D_is_trigger[ci] == 0;
 {SHAPE_EXTRA}
 	b2Rot rotation = {{ _Collider2D_cos[ci], _Collider2D_sin[ci] }};
-	if ( _Collider2D_kind[ci] == 1 )
+	/* CapsuleCollider2D: kind 2 vertical, 3 horizontal. One no longer than it
+	 * is wide is a circle, as in Unity (Box2D refuses a zero-length capsule). */
+	int cap = _Collider2D_kind[ci] >= 2, vert = _Collider2D_kind[ci] == 2;
+	float r = !cap || vert ? _Collider2D_hw[ci] : _Collider2D_hh[ci];
+	float h = cap ? ( vert ? _Collider2D_hh[ci] : _Collider2D_hw[ci] ) - r : 0.0f;
+	if ( _Collider2D_kind[ci] == 1 || ( cap && h <= 0.005f ) )
 	{{
-		b2Circle circle = {{ offset, _Collider2D_hw[ci] }};
+		b2Circle circle = {{ offset, r }};
 		b2CreateCircleShape( bodyId, &def, &circle );
+	}}
+	else if ( cap )
+	{{
+		b2Vec2 d = b2RotateVector( rotation, vert ? (b2Vec2){{ 0.0f, h }} : (b2Vec2){{ h, 0.0f }} );
+		b2Capsule capsule = {{ b2Sub( offset, d ), b2Add( offset, d ), r }};
+		b2CreateCapsuleShape( bodyId, &def, &capsule );
 	}}
 	else
 	{{
