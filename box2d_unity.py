@@ -37,6 +37,13 @@ e.g. scenes that are not loaded) it also exports
 
 and bodies whose owner is not live are disabled (b2Body_Disable) until it is again.
 
+With plan["physics2d_contacts"] (scripts read Collision2D contacts) each touching pair's manifold
+is reported just before the pair, from b2Shape_GetContactData:
+
+    void engine_col2d_manifold( int a, int b, float nx, float ny, int n,
+                                float p0x, float p0y, float p1x, float p1y );
+                                normal from a to b, n (0-2) world contact points
+
 Mapping:
     Rigidbody2D Dynamic / Kinematic / Static  ->  b2_dynamicBody / kinematic / static, rotation
                                                   locked (unity_pack has no rigidbody rotation)
@@ -122,6 +129,8 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
     )
     if plan.get( "physics2d_live" ):
         glue = _with_live_gate( glue )
+    if plan.get( "physics2d_contacts" ):
+        glue = _with_contact_manifolds( glue )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -225,6 +234,32 @@ def _with_live_gate( glue ):
     return glue
 
 
+def _with_contact_manifolds( glue ):
+    """Glue that reports each touching pair's manifold (normal, points) before the pair."""
+    edits = (
+        ( "void engine_col2d_contact( int a, int b );\n",
+          "void engine_col2d_contact( int a, int b );\n" + CONTACT_EXPORTS ),
+        ( "static int b2u_pair_n;\n", "static int b2u_pair_n;\n" + CONTACT_STATE ),
+        ( "\t\tb2CreateCircleShape( bodyId, &def, &circle );\n",
+          "\t\tb2u_col_shape[ci] = b2CreateCircleShape( bodyId, &def, &circle );\n"
+          "\t\tb2u_col_has_shape[ci] = 1;\n" ),
+        ( "\t\tb2CreateCapsuleShape( bodyId, &def, &capsule );\n",
+          "\t\tb2u_col_shape[ci] = b2CreateCapsuleShape( bodyId, &def, &capsule );\n"
+          "\t\tb2u_col_has_shape[ci] = 1;\n" ),
+        ( "\t\tb2CreatePolygonShape( bodyId, &def, &box );\n",
+          "\t\tb2u_col_shape[ci] = b2CreatePolygonShape( bodyId, &def, &box );\n"
+          "\t\tb2u_col_has_shape[ci] = 1;\n" ),
+        ( "\t\tengine_col2d_contact( b2u_pair_a[i], b2u_pair_b[i] );\n",
+          "\t\tb2u_report_manifold( b2u_pair_a[i], b2u_pair_b[i] );\n"
+          "\t\tengine_col2d_contact( b2u_pair_a[i], b2u_pair_b[i] );\n" ),
+    )
+    for old, new in edits:
+        if glue.count( old ) != 1:
+            raise ValueError( "box2d_unity: contact anchor not found: %r" % old[:60] )
+        glue = glue.replace( old, new )
+    return glue
+
+
 def _write_if_different( path, text ):
     try:
         with open( path, encoding="utf-8" ) as f:
@@ -250,6 +285,49 @@ extern const float _Collider2D_friction[];
 extern const float _Collider2D_bounciness[];
 extern const int _Collider2D_friction_combine[];
 extern const int _Collider2D_bounce_combine[];
+"""
+
+CONTACT_EXPORTS = """void engine_col2d_manifold( int a, int b, float nx, float ny, int n, float p0x, float p0y,
+							float p1x, float p1y );
+"""
+
+CONTACT_STATE = """
+/* Each collider's shape, to read a touching pair's manifold after the step */
+static b2ShapeId b2u_col_shape[B2U_MAX_COL];
+static int b2u_col_has_shape[B2U_MAX_COL];
+
+/* Report the manifold of pair (a, b): normal from a to b, world points */
+static void b2u_report_manifold( int a, int b )
+{
+	b2ContactData data[32];
+	if ( a < 0 || b < 0 || b2u_col_has_shape[a] == 0 || b2u_col_has_shape[b] == 0 )
+		return;
+	int n = b2Shape_GetContactData( b2u_col_shape[a], data, 32 );
+	for ( int k = 0; k < n; ++k )
+	{
+		int flip;
+		if ( B2_ID_EQUALS( data[k].shapeIdA, b2u_col_shape[a] ) && B2_ID_EQUALS( data[k].shapeIdB, b2u_col_shape[b] ) )
+			flip = 0;
+		else if ( B2_ID_EQUALS( data[k].shapeIdA, b2u_col_shape[b] ) && B2_ID_EQUALS( data[k].shapeIdB, b2u_col_shape[a] ) )
+			flip = 1;
+		else
+			continue;
+		b2Manifold* m = &data[k].manifold;
+		b2Pos center = b2Body_GetWorldCenter( b2Shape_GetBody( data[k].shapeIdA ) );
+		float px[2] = { 0.0f, 0.0f }, py[2] = { 0.0f, 0.0f };
+		int count = m->pointCount < 2 ? m->pointCount : 2;
+		for ( int q = 0; q < count; ++q )
+		{
+			b2Pos w = b2OffsetPos( center, m->points[q].anchorA );
+			px[q] = (float)w.x;
+			py[q] = (float)w.y;
+		}
+		float nx = flip ? -m->normal.x : m->normal.x;
+		float ny = flip ? -m->normal.y : m->normal.y;
+		engine_col2d_manifold( a, b, nx, ny, count, px[0], py[0], px[1], py[1] );
+		return;
+	}
+}
 """
 
 LIVE_EXPORTS = """int engine_rb2d_live( int rb );
