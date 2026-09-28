@@ -1,10 +1,10 @@
-[gd_scene load_steps=12 format=3 uid="uid://b2gmain0000001"]
+[gd_scene load_steps=12 format=3]
 
 [ext_resource type="PhysicsMaterial" path="res://bouncy.tres" id="1_bouncy"]
 [ext_resource type="Script" path="res://Ball.cs" id="3_ball"]
 [ext_resource type="Script" path="res://Zone.cs" id="4_zone"]
 [ext_resource type="Script" path="res://Coin.cs" id="5_coin"]
-[ext_resource type="PackedScene" uid="uid://b2gcrate000001" path="res://crate.tscn" id="2_crate"]
+[ext_resource type="PackedScene" path="res://crate.tscn" id="2_crate"]
 
 [sub_resource type="RectangleShape2D" id="RectangleShape2D_floor"]
 size = Vector2(2000, 40)
