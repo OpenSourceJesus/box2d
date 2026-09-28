@@ -1,0 +1,109 @@
+[gd_scene load_steps=12 format=3 uid="uid://b2gmain0000001"]
+
+[ext_resource type="PhysicsMaterial" path="res://bouncy.tres" id="1_bouncy"]
+[ext_resource type="Script" path="res://Ball.cs" id="3_ball"]
+[ext_resource type="Script" path="res://Zone.cs" id="4_zone"]
+[ext_resource type="Script" path="res://Coin.cs" id="5_coin"]
+[ext_resource type="PackedScene" uid="uid://b2gcrate000001" path="res://crate.tscn" id="2_crate"]
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_floor"]
+size = Vector2(2000, 40)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_pad"]
+size = Vector2(100, 20)
+
+[sub_resource type="PhysicsMaterial" id="PhysicsMaterial_pad"]
+bounce = 0.3
+absorbent = true
+
+[sub_resource type="CircleShape2D" id="CircleShape2D_ball"]
+radius = 10.0
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_zone"]
+size = Vector2(60, 20)
+
+[sub_resource type="RectangleShape2D" id="RectangleShape2D_coin"]
+size = Vector2(20, 8)
+
+[node name="Main" type="Node2D"]
+
+[node name="Floor" type="StaticBody2D" parent="."]
+position = Vector2(0, 400)
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Floor"]
+shape = SubResource("RectangleShape2D_floor")
+
+[node name="Pad" type="StaticBody2D" parent="."]
+position = Vector2(300, 370)
+physics_material_override = SubResource("PhysicsMaterial_pad")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Pad"]
+shape = SubResource("RectangleShape2D_pad")
+
+[node name="BallA" type="RigidBody2D" parent="." groups=["balls"]]
+position = Vector2(-300, 200)
+physics_material_override = ExtResource("1_bouncy")
+lock_rotation = true
+linear_damp_mode = 1
+contact_monitor = true
+max_contacts_reported = 4
+script = ExtResource("3_ball")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="BallA"]
+shape = SubResource("CircleShape2D_ball")
+
+[node name="BallB" type="RigidBody2D" parent="." groups=["balls"]]
+position = Vector2(300, 190)
+physics_material_override = ExtResource("1_bouncy")
+lock_rotation = true
+linear_damp_mode = 1
+script = ExtResource("3_ball")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="BallB"]
+shape = SubResource("CircleShape2D_ball")
+
+[node name="Drifter" type="RigidBody2D" parent="."]
+position = Vector2(0, -2000)
+gravity_scale = 0.0
+lock_rotation = true
+linear_velocity = Vector2(100, 0)
+linear_damp_mode = 1
+linear_damp = 2.0
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Drifter"]
+shape = SubResource("CircleShape2D_ball")
+
+[node name="Crate1" parent="." instance=ExtResource("2_crate")]
+position = Vector2(600, 360)
+
+[node name="Crate2" parent="." instance=ExtResource("2_crate")]
+position = Vector2(600, 320)
+
+[node name="Crate3" parent="." instance=ExtResource("2_crate")]
+position = Vector2(600, 280)
+
+[node name="Crate4" parent="." instance=ExtResource("2_crate")]
+position = Vector2(600, 240)
+
+[node name="Crate5" parent="." instance=ExtResource("2_crate")]
+position = Vector2(600, 200)
+
+[node name="Crate6" parent="." instance=ExtResource("2_crate")]
+position = Vector2(600, 160)
+
+[node name="Zone" type="Area2D" parent="."]
+position = Vector2(300, 280)
+script = ExtResource("4_zone")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Zone"]
+shape = SubResource("RectangleShape2D_zone")
+
+[node name="Coin" type="Area2D" parent="."]
+position = Vector2(-300, 352)
+script = ExtResource("5_coin")
+
+[node name="CollisionShape2D" type="CollisionShape2D" parent="Coin"]
+shape = SubResource("RectangleShape2D_coin")
+
+[connection signal="body_entered" from="Zone" to="Zone" method="OnEntered"]
+[connection signal="body_exited" from="Zone" to="Zone" method="OnExited"]

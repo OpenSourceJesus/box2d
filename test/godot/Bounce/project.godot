@@ -1,0 +1,9 @@
+; Box2D-Packed's Godot mode, end to end: see ../run_godot_tests.py.
+
+config_version=5
+
+[application]
+
+config/name="Bounce"
+run/main_scene="res://main.tscn"
+config/features=PackedStringArray("4.3", "C#")
