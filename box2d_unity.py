@@ -627,6 +627,19 @@ void engine_box2d_step( void )
 		b2u_rb_created += 1;
 	}}
 
+	/* A static collider whose Transform moved (a parent, a script) is teleported, as in Unity */
+	for ( int ci = 0; ci < _Collider2D_count && ci < B2U_MAX_COL; ++ci )
+	{{
+		if ( b2u_col_has_body[ci] == 0 )
+			continue;
+		float x, y;
+		engine_col2d_center( ci, &x, &y );
+		b2BodyId bodyId = b2u_col_body[ci];
+		b2Pos p = b2Body_GetPosition( bodyId );
+		if ( p.x != x || p.y != y )
+			b2Body_SetTransform( bodyId, (b2Pos){{ x, y }}, b2Body_GetRotation( bodyId ) );
+	}}
+
 	/* Push what scripts may have changed since the last step */
 	b2World_SetGravity( b2u_world, (b2Vec2){{ Physics2D_gravity_x, Physics2D_gravity_y }} );
 	for ( int rb = 0; rb < b2u_rb_created; ++rb )
