@@ -155,7 +155,9 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
     if plan.get( "physics2d_rotation" ) and mode == "unity":
         glue = _with_rotation( glue )
     if plan.get( "physics2d_joints" ) and mode == "unity":
-        glue = _with_joints( glue, len( plan.get( "joints2d" ) or [] ) )
+        # the authored joints and AddComponent's spares
+        glue = _with_joints( glue, max( len( plan.get( "joints2d" ) or [] ),
+                                        int( plan.get( "joints2d_cap" ) or 0 ) ) )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -489,8 +491,9 @@ static int b2u_joints_ready;
 static b2BodyId b2u_ground;
 /* settings as last pushed: use_motor, motor_speed, motor_max, use_limits, lower, upper,
  * distance, frequency, damping, break_force, break_torque, max_force, max_torque, correction,
- * offset x, y, angle, target x, y, break_action */
-enum {{ B2U_JLAST = 20 }};
+ * offset x, y, angle, target x, y, break_action; and what the joint was built from (a change
+ * rebuilds it): connected body, anchor x, y, connected anchor x, y */
+enum {{ B2U_JLAST = 25 }};
 static float b2u_jlast[B2U_MAX_JOINT][B2U_JLAST];
 
 static int b2u_jchanged( int j, int k, float v )
@@ -708,7 +711,9 @@ static void b2u_create_joint( int j )
 							  _Joint2D_break_force[j], _Joint2D_break_torque[j], _Joint2D_max_force[j],
 							  _Joint2D_max_torque[j], _Joint2D_correction[j], _Joint2D_offset_x[j],
 							  _Joint2D_offset_y[j], _Joint2D_offset_angle[j], _Joint2D_target_x[j],
-							  _Joint2D_target_y[j], (float)_Joint2D_break_action[j] }};
+							  _Joint2D_target_y[j], (float)_Joint2D_break_action[j], (float)_Joint2D_rb_b[j],
+							  _Joint2D_anchor_x[j], _Joint2D_anchor_y[j], _Joint2D_canchor_x[j],
+							  _Joint2D_canchor_y[j] }};
 	for ( int k = 0; k < B2U_JLAST; ++k )
 		b2u_jlast[j][k] = now[k];
 }}
@@ -733,6 +738,18 @@ static void b2u_push_joints( void )
 	{{
 		if ( _Joint2D_broken[j] )
 			continue;
+		if ( b2u_joint_live[j] )
+		{{
+			/* connectedBody / anchor / connectedAnchor written by a script: built again */
+			int moved = b2u_jchanged( j, 20, (float)_Joint2D_rb_b[j] ) | b2u_jchanged( j, 21, _Joint2D_anchor_x[j] ) |
+						b2u_jchanged( j, 22, _Joint2D_anchor_y[j] ) | b2u_jchanged( j, 23, _Joint2D_canchor_x[j] ) |
+						b2u_jchanged( j, 24, _Joint2D_canchor_y[j] );
+			if ( moved )
+			{{
+				b2DestroyJoint( b2u_joint[j] );
+				b2u_joint_live[j] = 0;
+			}}
+		}}
 		if ( _Joint2D_enabled[j] && !b2u_joint_live[j] )
 			b2u_create_joint( j );
 		else if ( !_Joint2D_enabled[j] && b2u_joint_live[j] )
