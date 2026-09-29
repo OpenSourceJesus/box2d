@@ -58,7 +58,8 @@ Mapping:
     m_IsTrigger                               ->  sensor, no collision messages; with
                                                   plan["physics2d_triggers"] its overlaps are
                                                   reported with engine_col2d_trigger( a, b )
-                                                  for OnTrigger*2D (standard API only)
+                                                  for OnTrigger*2D (injected too with
+                                                  --physics-inject)
     Rigidbody2D mass                          ->  body mass (and again when a script changes it)
     Rigidbody2D bodyType / isKinematic        ->  body type, and b2Body_SetType when a script
                                                   changes it
@@ -144,7 +145,7 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
     if plan.get( "physics2d_triggers" ) and mode == "unity":
         glue = _with_unity_triggers( glue )
     if plan.get( "physics2d_queries" ):
-        glue = glue + QUERY_FUNCTIONS
+        glue = _with_query_layers( glue ) + QUERY_FUNCTIONS
     if plan.get( "physics2d_rotation" ) and mode == "unity":
         glue = _with_rotation( glue )
     paths = []
@@ -176,6 +177,24 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
                 },
             ],
         }
+        if plan.get( "physics2d_triggers" ) and mode == "unity":
+            # OnTrigger*2D: the sensor events are injected too (_with_unity_triggers)
+            spec["defines"]["B2_PACK_NO_SENSOR_BEGIN_ARRAY"] = 1
+            spec["defines"]["B2_PACK_NO_SENSOR_END_ARRAY"] = 1
+            spec["globals"] += [
+                "void b2u_trig_begin( int a, int b );",
+                "void b2u_trig_end( int a, int b );",
+            ]
+            spec["inject"] += [
+                {
+                    "event": "sensor_begin",
+                    "code": "b2u_trig_begin( (int)(intptr_t)sensorShape->userData - 1, (int)(intptr_t)visitorShape->userData - 1 );",
+                },
+                {
+                    "event": "sensor_end",
+                    "code": "if ( visitorShape != NULL ) b2u_trig_end( (int)(intptr_t)sensorShape->userData - 1, (int)(intptr_t)visitorShape->userData - 1 );",
+                },
+            ]
         if mode == "godot":
             spec["defines"]["B2_PACK_NO_SENSOR_BEGIN_ARRAY"] = 1
             spec["defines"]["B2_PACK_NO_SENSOR_END_ARRAY"] = 1
@@ -276,60 +295,168 @@ def _with_contact_manifolds( glue ):
     return glue
 
 
-#: Physics2D.Raycast / OverlapCircle / OverlapPoint (plan["physics2d_queries"]). Each returns the
-#: collider index hit (-1 for none). Triggers are hit, as Unity's queriesHitTriggers default has
-#: it; a ray ignores a collider it starts inside (b2World_CastRayClosest), where Unity's
-#: queriesStartInColliders default would hit it.
+#: Physics2D.Raycast / RaycastAll / OverlapCircle / OverlapCircleAll / OverlapPoint
+#: (plan["physics2d_queries"]), with Unity's layerMask. Each returns the collider index hit (-1
+#: for none), or how many. Triggers are hit, as Unity's queriesHitTriggers default has
+#: it; a ray ignores a collider it starts inside, where Unity's queriesStartInColliders default
+#: would hit it.
 QUERY_FUNCTIONS = """
-/* Physics2D queries for unity_pack (plan["physics2d_queries"]) */
+/* Physics2D queries for unity_pack (plan["physics2d_queries"]). Unity's layerMask is tested
+ * against each collider's layer (m_Layer) in the callbacks: Box2D-Packed's filters are 16 bits. */
 #include <math.h>
-int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, float* out );
-int engine_box2d_overlap_circle( float x, float y, float radius );
-int engine_box2d_overlap_point( float x, float y );
+int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, unsigned int mask, float* out );
+int engine_box2d_raycast_all( float ox, float oy, float dx, float dy, float distance, unsigned int mask,
+							  float* out, int* colliders, int max );
+int engine_box2d_overlap_circle( float x, float y, float radius, unsigned int mask );
+int engine_box2d_overlap_circle_all( float x, float y, float radius, unsigned int mask, int* colliders, int max );
+int engine_box2d_overlap_point( float x, float y, unsigned int mask );
 
-/* out: point x, y, normal x, y, fraction, distance */
-int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, float* out )
+/* The collider of a shape, or -1 when the mask leaves its layer out */
+static int b2u_query_collider( b2ShapeId shapeId, unsigned int mask )
 {
-	b2u_ensure();
+	int ci = (int)(intptr_t)b2Shape_GetUserData( shapeId ) - 1;
+	if ( ci < 0 || ( ( mask >> ( _Collider2D_layer[ci] & 31 ) ) & 1u ) == 0 )
+		return -1;
+	return ci;
+}
+
+/* The ray's translation, or 0 for no ray: its length is `distance` (capped) */
+static int b2u_ray( float dx, float dy, float* distance, b2Vec2* translation )
+{
 	float len = sqrtf( dx * dx + dy * dy );
 	if ( len <= 0.0f )
-		return -1;
-	if ( !( distance < 1.0e6f ) )
-		distance = 1.0e6f;
-	b2Vec2 translation = { dx / len * distance, dy / len * distance };
-	b2RayResult r = b2World_CastRayClosest( b2u_world, (b2Pos){ ox, oy }, translation, b2DefaultQueryFilter() );
-	if ( r.hit == false )
-		return -1;
-	out[0] = (float)r.point.x;
-	out[1] = (float)r.point.y;
-	out[2] = r.normal.x;
-	out[3] = r.normal.y;
-	out[4] = r.fraction;
-	out[5] = r.fraction * distance;
-	return (int)(intptr_t)b2Shape_GetUserData( r.shapeId ) - 1;
+		return 0;
+	if ( !( *distance < 1.0e6f ) )
+		*distance = 1.0e6f;
+	translation->x = dx / len * *distance;
+	translation->y = dy / len * *distance;
+	return 1;
 }
 
-static bool b2u_overlap_first( b2ShapeId shapeId, void* context )
+typedef struct b2uRayAll
 {
-	*(int*)context = (int)(intptr_t)b2Shape_GetUserData( shapeId ) - 1;
-	return false;
+	float* out;
+	int* colliders;
+	int n, max, closest;
+	float distance;
+	unsigned int mask;
+} b2uRayAll;
+
+static float b2u_ray_hit( b2ShapeId shapeId, b2Pos point, b2Vec2 normal, float fraction, void* context )
+{
+	b2uRayAll* all = context;
+	int ci = b2u_query_collider( shapeId, all->mask );
+	if ( ci < 0 )
+		return -1.0f; /* not on the mask: ignore it, go on */
+	int k = all->closest ? 0 : all->n;
+	if ( all->closest == 0 && all->n >= all->max )
+		return 1.0f;
+	float* o = all->out + 6 * k;
+	o[0] = (float)point.x;
+	o[1] = (float)point.y;
+	o[2] = normal.x;
+	o[3] = normal.y;
+	o[4] = fraction;
+	o[5] = fraction * all->distance;
+	all->colliders[k] = ci;
+	if ( all->closest )
+	{
+		all->n = 1;
+		return fraction; /* clip: only a nearer one after this */
+	}
+	all->n += 1;
+	return 1.0f; /* every shape on the ray */
 }
 
-int engine_box2d_overlap_circle( float x, float y, float radius )
+/* out: point x, y, normal x, y, fraction, distance */
+int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, unsigned int mask, float* out )
+{
+	b2u_ensure();
+	b2Vec2 translation;
+	if ( b2u_ray( dx, dy, &distance, &translation ) == 0 )
+		return -1;
+	int collider = -1;
+	b2uRayAll one = { out, &collider, 0, 1, 1, distance, mask };
+	b2World_CastRay( b2u_world, (b2Pos){ ox, oy }, translation, b2DefaultQueryFilter(), b2u_ray_hit, &one );
+	return one.n > 0 ? collider : -1;
+}
+
+/* Every hit, nearest first (Unity's RaycastAll order); out holds 6 floats a hit */
+int engine_box2d_raycast_all( float ox, float oy, float dx, float dy, float distance, unsigned int mask,
+							  float* out, int* colliders, int max )
+{
+	b2u_ensure();
+	b2Vec2 translation;
+	if ( b2u_ray( dx, dy, &distance, &translation ) == 0 )
+		return 0;
+	b2uRayAll all = { out, colliders, 0, max, 0, distance, mask };
+	b2World_CastRay( b2u_world, (b2Pos){ ox, oy }, translation, b2DefaultQueryFilter(), b2u_ray_hit, &all );
+	for ( int i = 1; i < all.n; ++i )
+	{
+		for ( int k = i; k > 0 && out[6 * k + 4] < out[6 * ( k - 1 ) + 4]; --k )
+		{
+			for ( int j = 0; j < 6; ++j )
+			{
+				float t = out[6 * k + j];
+				out[6 * k + j] = out[6 * ( k - 1 ) + j];
+				out[6 * ( k - 1 ) + j] = t;
+			}
+			int c = colliders[k];
+			colliders[k] = colliders[k - 1];
+			colliders[k - 1] = c;
+		}
+	}
+	return all.n;
+}
+
+typedef struct b2uOverlap
+{
+	int* colliders;
+	int n, max;
+	unsigned int mask;
+} b2uOverlap;
+
+static bool b2u_overlap_collect( b2ShapeId shapeId, void* context )
+{
+	b2uOverlap* o = context;
+	int ci = b2u_query_collider( shapeId, o->mask );
+	if ( ci >= 0 && o->n < o->max )
+	{
+		o->colliders[o->n] = ci;
+		o->n += 1;
+	}
+	return o->n < o->max;
+}
+
+int engine_box2d_overlap_circle_all( float x, float y, float radius, unsigned int mask, int* colliders, int max )
 {
 	b2u_ensure();
 	b2Vec2 center = { 0.0f, 0.0f };
 	b2ShapeProxy proxy = b2MakeProxy( &center, 1, radius > 0.0f ? radius : 0.0f );
-	int found = -1;
-	b2World_OverlapShape( b2u_world, (b2Pos){ x, y }, &proxy, b2DefaultQueryFilter(), b2u_overlap_first, &found );
-	return found;
+	b2uOverlap o = { colliders, 0, max, mask };
+	b2World_OverlapShape( b2u_world, (b2Pos){ x, y }, &proxy, b2DefaultQueryFilter(), b2u_overlap_collect, &o );
+	return o.n;
 }
 
-int engine_box2d_overlap_point( float x, float y )
+int engine_box2d_overlap_circle( float x, float y, float radius, unsigned int mask )
 {
-	return engine_box2d_overlap_circle( x, y, 0.0f );
+	int found = -1;
+	return engine_box2d_overlap_circle_all( x, y, radius, mask, &found, 1 ) > 0 ? found : -1;
+}
+
+int engine_box2d_overlap_point( float x, float y, unsigned int mask )
+{
+	return engine_box2d_overlap_circle( x, y, 0.0f, mask );
 }
 """
+
+
+def _with_query_layers( glue ):
+    """The queries read each collider's layer (unity_pack's _Collider2D_layer). Box2D-Packed's
+    filters are 16 bits and Unity has 32 layers, so a query's layer mask is tested in its callbacks
+    rather than as shape categories: shapes and contacts are as before."""
+    return glue.replace( "void engine_box2d_step( void );\n",
+                         "void engine_box2d_step( void );\nextern const int _Collider2D_layer[];\n", 1 )
 
 
 def _with_rotation( glue ):
@@ -416,7 +543,8 @@ def _with_unity_triggers( glue ):
         void engine_col2d_trigger( int a, int b );
 
     unity_pack sends the messages by comparing them with the step before, as it does collisions.
-    Standard API only: with --physics-inject the triggers stay silent.
+    With --physics-inject the sensor begin / end events are injected (b2u_trig_begin / _end),
+    as the contacts are.
     """
     glue = glue.replace(
         "\tdef.enableContactEvents = _Collider2D_is_trigger[ci] == 0;\n",
@@ -432,7 +560,9 @@ def _with_unity_triggers( glue ):
         "static int b2u_trig_a[B2U_MAX_PAIRS];\n"
         "static int b2u_trig_b[B2U_MAX_PAIRS];\n"
         "static int b2u_trig_n;\n\n"
-        "static void b2u_trig_begin( int a, int b )\n"
+        "void b2u_trig_begin( int a, int b );\n"
+        "void b2u_trig_end( int a, int b );\n\n"
+        "void b2u_trig_begin( int a, int b )\n"
         "{\n"
         "\tint lo = a < b ? a : b;\n"
         "\tint hi = a < b ? b : a;\n"
@@ -448,7 +578,7 @@ def _with_unity_triggers( glue ):
         "\t\tb2u_trig_n += 1;\n"
         "\t}\n"
         "}\n\n"
-        "static void b2u_trig_end( int a, int b )\n"
+        "void b2u_trig_end( int a, int b )\n"
         "{\n"
         "\tint lo = a < b ? a : b;\n"
         "\tint hi = a < b ? b : a;\n"
