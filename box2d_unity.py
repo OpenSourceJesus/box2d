@@ -37,6 +37,10 @@ e.g. scenes that are not loaded) it also exports
 
 and bodies whose owner is not live are disabled (b2Body_Disable) until it is again.
 
+With plan["physics2d_queries"] it exports Physics2D.Raycast / OverlapCircle / OverlapPoint for the
+engine (a collider index, -1 for none); with plan["physics2d_rotation"] bodies turn (see
+_with_rotation) instead of having their rotation locked.
+
 With plan["physics2d_contacts"] (scripts read Collision2D contacts) each touching pair's manifold
 is reported just before the pair, from b2Shape_GetContactData:
 
@@ -45,8 +49,9 @@ is reported just before the pair, from b2Shape_GetContactData:
                                 normal from a to b, n (0-2) world contact points
 
 Mapping:
-    Rigidbody2D Dynamic / Kinematic / Static  ->  b2_dynamicBody / kinematic / static, rotation
-                                                  locked (unity_pack has no rigidbody rotation)
+    Rigidbody2D Dynamic / Kinematic / Static  ->  b2_dynamicBody / kinematic / static; rotation
+                                                  locked unless plan["physics2d_rotation"],
+                                                  and then locked by FreezeRotation only
     BoxCollider2D / CircleCollider2D          ->  offset box / circle, rotated by the collider
     CapsuleCollider2D                         ->  capsule along m_Direction (circle when short)
     Collider2D without a Rigidbody2D          ->  static body at the collider center
@@ -138,6 +143,10 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
         glue = _with_contact_manifolds( glue )
     if plan.get( "physics2d_triggers" ) and mode == "unity":
         glue = _with_unity_triggers( glue )
+    if plan.get( "physics2d_queries" ):
+        glue = glue + QUERY_FUNCTIONS
+    if plan.get( "physics2d_rotation" ) and mode == "unity":
+        glue = _with_rotation( glue )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -264,6 +273,136 @@ def _with_contact_manifolds( glue ):
         if glue.count( old ) != 1:
             raise ValueError( "box2d_unity: contact anchor not found: %r" % old[:60] )
         glue = glue.replace( old, new )
+    return glue
+
+
+#: Physics2D.Raycast / OverlapCircle / OverlapPoint (plan["physics2d_queries"]). Each returns the
+#: collider index hit (-1 for none). Triggers are hit, as Unity's queriesHitTriggers default has
+#: it; a ray ignores a collider it starts inside (b2World_CastRayClosest), where Unity's
+#: queriesStartInColliders default would hit it.
+QUERY_FUNCTIONS = """
+/* Physics2D queries for unity_pack (plan["physics2d_queries"]) */
+#include <math.h>
+int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, float* out );
+int engine_box2d_overlap_circle( float x, float y, float radius );
+int engine_box2d_overlap_point( float x, float y );
+
+/* out: point x, y, normal x, y, fraction, distance */
+int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, float* out )
+{
+	b2u_ensure();
+	float len = sqrtf( dx * dx + dy * dy );
+	if ( len <= 0.0f )
+		return -1;
+	if ( !( distance < 1.0e6f ) )
+		distance = 1.0e6f;
+	b2Vec2 translation = { dx / len * distance, dy / len * distance };
+	b2RayResult r = b2World_CastRayClosest( b2u_world, (b2Pos){ ox, oy }, translation, b2DefaultQueryFilter() );
+	if ( r.hit == false )
+		return -1;
+	out[0] = (float)r.point.x;
+	out[1] = (float)r.point.y;
+	out[2] = r.normal.x;
+	out[3] = r.normal.y;
+	out[4] = r.fraction;
+	out[5] = r.fraction * distance;
+	return (int)(intptr_t)b2Shape_GetUserData( r.shapeId ) - 1;
+}
+
+static bool b2u_overlap_first( b2ShapeId shapeId, void* context )
+{
+	*(int*)context = (int)(intptr_t)b2Shape_GetUserData( shapeId ) - 1;
+	return false;
+}
+
+int engine_box2d_overlap_circle( float x, float y, float radius )
+{
+	b2u_ensure();
+	b2Vec2 center = { 0.0f, 0.0f };
+	b2ShapeProxy proxy = b2MakeProxy( &center, 1, radius > 0.0f ? radius : 0.0f );
+	int found = -1;
+	b2World_OverlapShape( b2u_world, (b2Pos){ x, y }, &proxy, b2DefaultQueryFilter(), b2u_overlap_first, &found );
+	return found;
+}
+
+int engine_box2d_overlap_point( float x, float y )
+{
+	return engine_box2d_overlap_circle( x, y, 0.0f );
+}
+"""
+
+
+def _with_rotation( glue ):
+    """
+    Rigidbody2D rotation (plan["physics2d_rotation"], unity mode). A body turns unless its
+    Rigidbody2D freezes rotation (RigidbodyConstraints2D.FreezeRotation); it starts at its owner's
+    authored angle and angular velocity. Each step pushes what scripts changed -- an angle written
+    (rotation / MoveRotation), freezeRotation, angularVelocity, and the torque and angular impulse
+    AddTorque accumulated (applied, then cleared) -- and a teleport keeps the rotation; after the
+    step the angle and angular velocity are pulled back. engine.c exports
+
+        float engine_rb2d_get_rot( int rb );          owner's rotation about z, radians
+        void engine_rb2d_set_rot( int rb, float a );
+
+    Without the flag every body's rotation stays locked, as before.
+    """
+    def sub( old, new ):
+        nonlocal glue
+        assert old in glue, "box2d_unity: rotation marker not found: %r" % old[:60]
+        glue = glue.replace( old, new, 1 )
+
+    sub( "void engine_box2d_step( void );\n",
+         "void engine_box2d_step( void );\n"
+         "float engine_rb2d_get_rot( int rb );\n"
+         "void engine_rb2d_set_rot( int rb, float a );\n"
+         "extern int _Rigidbody2D_freeze_rot[];\n"
+         "extern float _Rigidbody2D_ang_vel[];\n"
+         "extern float _Rigidbody2D_torque[];\n"
+         "extern float _Rigidbody2D_ang_imp[];\n" )
+    sub( "static int b2u_last_type[B2U_MAX_RB];\n",
+         "static int b2u_last_type[B2U_MAX_RB];\n"
+         "/* the angle as last pulled, and freezeRotation as last pushed */\n"
+         "static float b2u_last_a[B2U_MAX_RB];\n"
+         "static int b2u_last_freeze[B2U_MAX_RB];\n" )
+    sub( "\tdef.motionLocks.angularZ = true;\n",
+         "\tdef.motionLocks.angularZ = _Rigidbody2D_freeze_rot[rb] != 0;\n"
+         "\tdef.rotation = b2MakeRot( engine_rb2d_get_rot( rb ) );\n"
+         "\tdef.angularVelocity = _Rigidbody2D_ang_vel[rb];\n" )
+    sub( "\tb2u_last_type[rb] = _Rigidbody2D_body_type[rb];\n}\n",
+         "\tb2u_last_type[rb] = _Rigidbody2D_body_type[rb];\n"
+         "\tb2u_last_a[rb] = engine_rb2d_get_rot( rb );\n"
+         "\tb2u_last_freeze[rb] = _Rigidbody2D_freeze_rot[rb];\n}\n" )
+    sub( "b2Body_SetTransform( bodyId, (b2Pos){ x, y }, b2Rot_identity );",
+         "b2Body_SetTransform( bodyId, (b2Pos){ x, y }, b2Body_GetRotation( bodyId ) );" )
+    sub( "\t\tif ( _Rigidbody2D_body_type[rb] != b2u_last_type[rb] )\n",
+         "\t\t{\n"
+         "\t\t\t/* rotation / MoveRotation written by a script */\n"
+         "\t\t\tfloat a = engine_rb2d_get_rot( rb );\n"
+         "\t\t\tif ( a != b2u_last_a[rb] )\n"
+         "\t\t\t\tb2Body_SetTransform( bodyId, b2Body_GetPosition( bodyId ), b2MakeRot( a ) );\n"
+         "\t\t}\n"
+         "\t\tif ( _Rigidbody2D_freeze_rot[rb] != b2u_last_freeze[rb] )\n"
+         "\t\t{\n"
+         "\t\t\tb2MotionLocks locks = { 0 };\n"
+         "\t\t\tlocks.angularZ = _Rigidbody2D_freeze_rot[rb] != 0;\n"
+         "\t\t\tb2Body_SetMotionLocks( bodyId, locks );\n"
+         "\t\t\tb2u_last_freeze[rb] = _Rigidbody2D_freeze_rot[rb];\n"
+         "\t\t}\n"
+         "\t\tif ( _Rigidbody2D_body_type[rb] != b2u_last_type[rb] )\n" )
+    sub( "\t\t\tb2Body_SetLinearVelocity( bodyId, (b2Vec2){ _Rigidbody2D_vel_x[rb], _Rigidbody2D_vel_y[rb] } );\n",
+         "\t\t\tb2Body_SetLinearVelocity( bodyId, (b2Vec2){ _Rigidbody2D_vel_x[rb], _Rigidbody2D_vel_y[rb] } );\n"
+         "\t\t\tb2Body_SetAngularVelocity( bodyId, _Rigidbody2D_ang_vel[rb] );\n"
+         "\t\t\tif ( _Rigidbody2D_torque[rb] != 0.0f )\n"
+         "\t\t\t\tb2Body_ApplyTorque( bodyId, _Rigidbody2D_torque[rb], true );\n"
+         "\t\t\tif ( _Rigidbody2D_ang_imp[rb] != 0.0f )\n"
+         "\t\t\t\tb2Body_ApplyAngularImpulse( bodyId, _Rigidbody2D_ang_imp[rb], true );\n"
+         "\t\t\t_Rigidbody2D_torque[rb] = 0.0f;\n"
+         "\t\t\t_Rigidbody2D_ang_imp[rb] = 0.0f;\n" )
+    sub( "\t\t_Rigidbody2D_vel_y[rb] = v.y;\n",
+         "\t\t_Rigidbody2D_vel_y[rb] = v.y;\n"
+         "\t\tengine_rb2d_set_rot( rb, b2Rot_GetAngle( b2Body_GetRotation( bodyId ) ) );\n"
+         "\t\tb2u_last_a[rb] = engine_rb2d_get_rot( rb );\n"
+         "\t\t_Rigidbody2D_ang_vel[rb] = b2Body_GetAngularVelocity( bodyId );\n" )
     return glue
 
 
@@ -719,19 +858,24 @@ static void b2u_create( void )
 	b2u_ready = 1;
 }}
 
-void engine_box2d_step( void )
+/* The world, and every body so far: on the first step, or a query before it
+ * (a script's Start), and AddComponent<Rigidbody2D> bodies when they appear */
+static void b2u_ensure( void )
 {{
 	if ( b2u_ready == 0 )
 	{{
 		b2u_create();
 	}}
-
-	/* Authored bodies on the first step, AddComponent<Rigidbody2D> bodies when they appear */
 	while ( b2u_rb_created < _Rigidbody2D_count && b2u_rb_created < B2U_MAX_RB )
 	{{
 		b2u_create_body( b2u_rb_created );
 		b2u_rb_created += 1;
 	}}
+}}
+
+void engine_box2d_step( void )
+{{
+	b2u_ensure();
 
 	/* A static collider whose Transform moved (a parent, a script) is teleported, as in Unity */
 	for ( int ci = 0; ci < _Collider2D_count && ci < B2U_MAX_COL; ++ci )
