@@ -474,6 +474,11 @@ extern float _Joint2D_distance[], _Joint2D_frequency[], _Joint2D_damping[], _Joi
 extern float _Joint2D_upper[], _Joint2D_motor_speed[], _Joint2D_motor_max[], _Joint2D_angle[];
 extern float _Joint2D_break_force[], _Joint2D_break_torque[];
 extern float _Joint2D_out_angle[], _Joint2D_out_speed[], _Joint2D_out_translation[];
+extern int _Joint2D_auto_offset[], _Joint2D_auto_target[], _Joint2D_break_action[];
+extern float _Joint2D_max_force[], _Joint2D_max_torque[], _Joint2D_correction[];
+extern float _Joint2D_offset_x[], _Joint2D_offset_y[], _Joint2D_offset_angle[];
+extern float _Joint2D_target_x[], _Joint2D_target_y[];
+extern float _Joint2D_out_force_x[], _Joint2D_out_force_y[], _Joint2D_out_torque[];
 void engine_joint2d_broken( int j );
 
 #define B2U_DEG ( B2_PI / 180.0f )
@@ -483,8 +488,10 @@ static int b2u_joint_live[B2U_MAX_JOINT];
 static int b2u_joints_ready;
 static b2BodyId b2u_ground;
 /* settings as last pushed: use_motor, motor_speed, motor_max, use_limits, lower, upper,
- * distance, frequency, damping, break_force, break_torque */
-static float b2u_jlast[B2U_MAX_JOINT][11];
+ * distance, frequency, damping, break_force, break_torque, max_force, max_torque, correction,
+ * offset x, y, angle, target x, y, break_action */
+enum {{ B2U_JLAST = 20 }};
+static float b2u_jlast[B2U_MAX_JOINT][B2U_JLAST];
 
 static int b2u_jchanged( int j, int k, float v )
 {{
@@ -494,9 +501,21 @@ static int b2u_jchanged( int j, int k, float v )
 	return 1;
 }}
 
-static float b2u_threshold( float v )
+/* A break threshold; JointBreakAction2D.Ignore (0) never breaks */
+static float b2u_threshold( int j, float v )
 {{
+	if ( _Joint2D_break_action[j] == 0 )
+		return 3.0e38f;
 	return v < 1.0e37f && v >= 0.0f ? v : 3.0e38f;
+}}
+
+/* RelativeJoint2D's correctionScale (Box2D v2's motor joint corrected that fraction of the error
+ * a step) as a spring: sqrt( scale ) / ( 2 pi dt ) hertz */
+static float b2u_correction_hertz( int j )
+{{
+	float h = Time_fixedDeltaTime > 1e-8f ? Time_fixedDeltaTime : 0.02f;
+	float c = _Joint2D_correction[j] > 0.0f ? _Joint2D_correction[j] : 0.0f;
+	return sqrtf( c ) / ( 2.0f * B2_PI * h );
 }}
 
 static void b2u_joint_base( b2JointDef* base, int j, b2BodyId a, b2Vec2 pa, float qa, b2BodyId b, b2Vec2 pb,
@@ -509,8 +528,8 @@ static void b2u_joint_base( b2JointDef* base, int j, b2BodyId a, b2Vec2 pa, floa
 	base->localFrameB.p = pb;
 	base->localFrameB.q = b2MakeRot( qb );
 	base->collideConnected = _Joint2D_collide[j] != 0;
-	base->forceThreshold = b2u_threshold( _Joint2D_break_force[j] );
-	base->torqueThreshold = b2u_threshold( _Joint2D_break_torque[j] );
+	base->forceThreshold = b2u_threshold( j, _Joint2D_break_force[j] );
+	base->torqueThreshold = b2u_threshold( j, _Joint2D_break_torque[j] );
 	base->userData = (void*)(intptr_t)( j + 1 );
 }}
 
@@ -621,17 +640,76 @@ static void b2u_create_joint( int j )
 			id = b2CreateWheelJoint( b2u_world, &def );
 			break;
 		}}
+		case 6: /* FrictionJoint2D: relative motion to rest, up to maxForce / maxTorque */
+		{{
+			b2MotorJointDef def = b2DefaultMotorJointDef();
+			b2u_joint_base( &def.base, j, other, lc, angOwn - angOther, own, la, 0.0f );
+			def.maxVelocityForce = _Joint2D_max_force[j];
+			def.maxVelocityTorque = _Joint2D_max_torque[j];
+			def.linearHertz = 0.0f;
+			def.angularHertz = 0.0f;
+			def.maxSpringForce = 0.0f;
+			def.maxSpringTorque = 0.0f;
+			id = b2CreateMotorJoint( b2u_world, &def );
+			break;
+		}}
+		case 7: /* RelativeJoint2D: the own body held at an offset from the connected one */
+		{{
+			if ( _Joint2D_auto_offset[j] )
+			{{
+				b2Vec2 off = b2Body_GetLocalPoint( other, b2Body_GetPosition( own ) );
+				_Joint2D_offset_x[j] = off.x;
+				_Joint2D_offset_y[j] = off.y;
+				_Joint2D_offset_angle[j] = ( angOwn - angOther ) / B2U_DEG;
+			}}
+			b2MotorJointDef def = b2DefaultMotorJointDef();
+			b2u_joint_base( &def.base, j, other, (b2Vec2){{ _Joint2D_offset_x[j], _Joint2D_offset_y[j] }},
+							_Joint2D_offset_angle[j] * B2U_DEG, own, (b2Vec2){{ 0.0f, 0.0f }}, 0.0f );
+			def.maxVelocityForce = _Joint2D_max_force[j];
+			def.maxVelocityTorque = _Joint2D_max_torque[j];
+			def.linearHertz = b2u_correction_hertz( j );
+			def.angularHertz = b2u_correction_hertz( j );
+			def.linearDampingRatio = 1.0f;
+			def.angularDampingRatio = 1.0f;
+			def.maxSpringForce = _Joint2D_max_force[j];
+			def.maxSpringTorque = _Joint2D_max_torque[j];
+			id = b2CreateMotorJoint( b2u_world, &def );
+			break;
+		}}
+		case 8: /* TargetJoint2D: the own anchor pulled to a world point by a spring */
+		{{
+			if ( _Joint2D_auto_target[j] )
+			{{
+				_Joint2D_target_x[j] = (float)wa.x;
+				_Joint2D_target_y[j] = (float)wa.y;
+			}}
+			b2MotorJointDef def = b2DefaultMotorJointDef();
+			b2u_joint_base( &def.base, j, b2u_ground, (b2Vec2){{ _Joint2D_target_x[j], _Joint2D_target_y[j] }},
+							angOwn, own, la, 0.0f );
+			def.maxVelocityForce = 0.0f;
+			def.maxVelocityTorque = 0.0f;
+			def.linearHertz = _Joint2D_frequency[j];
+			def.linearDampingRatio = _Joint2D_damping[j];
+			def.maxSpringForce = _Joint2D_max_force[j];
+			def.angularHertz = 0.0f;
+			def.maxSpringTorque = 0.0f;
+			id = b2CreateMotorJoint( b2u_world, &def );
+			break;
+		}}
 		default:
 			break;
 	}}
 	b2u_joint[j] = id;
 	b2u_joint_live[j] = B2_IS_NON_NULL( id );
 	/* what was built is what was pushed */
-	float now[11] = {{ (float)_Joint2D_use_motor[j], _Joint2D_motor_speed[j], _Joint2D_motor_max[j],
-					   (float)_Joint2D_use_limits[j], _Joint2D_lower[j], _Joint2D_upper[j], _Joint2D_distance[j],
-					   _Joint2D_frequency[j], _Joint2D_damping[j], _Joint2D_break_force[j],
-					   _Joint2D_break_torque[j] }};
-	for ( int k = 0; k < 11; ++k )
+	float now[B2U_JLAST] = {{ (float)_Joint2D_use_motor[j], _Joint2D_motor_speed[j], _Joint2D_motor_max[j],
+							  (float)_Joint2D_use_limits[j], _Joint2D_lower[j], _Joint2D_upper[j],
+							  _Joint2D_distance[j], _Joint2D_frequency[j], _Joint2D_damping[j],
+							  _Joint2D_break_force[j], _Joint2D_break_torque[j], _Joint2D_max_force[j],
+							  _Joint2D_max_torque[j], _Joint2D_correction[j], _Joint2D_offset_x[j],
+							  _Joint2D_offset_y[j], _Joint2D_offset_angle[j], _Joint2D_target_x[j],
+							  _Joint2D_target_y[j], (float)_Joint2D_break_action[j] }};
+	for ( int k = 0; k < B2U_JLAST; ++k )
 		b2u_jlast[j][k] = now[k];
 }}
 
@@ -672,10 +750,16 @@ static void b2u_push_joints( void )
 		int lim = b2u_jchanged( j, 4, _Joint2D_lower[j] ) | b2u_jchanged( j, 5, _Joint2D_upper[j] );
 		int dist = b2u_jchanged( j, 6, _Joint2D_distance[j] );
 		int spring = b2u_jchanged( j, 7, _Joint2D_frequency[j] ) | b2u_jchanged( j, 8, _Joint2D_damping[j] );
-		if ( b2u_jchanged( j, 9, _Joint2D_break_force[j] ) )
-			b2Joint_SetForceThreshold( id, b2u_threshold( _Joint2D_break_force[j] ) );
-		if ( b2u_jchanged( j, 10, _Joint2D_break_torque[j] ) )
-			b2Joint_SetTorqueThreshold( id, b2u_threshold( _Joint2D_break_torque[j] ) );
+		int action = b2u_jchanged( j, 19, (float)_Joint2D_break_action[j] );
+		if ( b2u_jchanged( j, 9, _Joint2D_break_force[j] ) | action )
+			b2Joint_SetForceThreshold( id, b2u_threshold( j, _Joint2D_break_force[j] ) );
+		if ( b2u_jchanged( j, 10, _Joint2D_break_torque[j] ) | action )
+			b2Joint_SetTorqueThreshold( id, b2u_threshold( j, _Joint2D_break_torque[j] ) );
+		int maxf = b2u_jchanged( j, 11, _Joint2D_max_force[j] ) | b2u_jchanged( j, 12, _Joint2D_max_torque[j] );
+		int corr = b2u_jchanged( j, 13, _Joint2D_correction[j] );
+		int off = b2u_jchanged( j, 14, _Joint2D_offset_x[j] ) | b2u_jchanged( j, 15, _Joint2D_offset_y[j] ) |
+				  b2u_jchanged( j, 16, _Joint2D_offset_angle[j] );
+		int target = b2u_jchanged( j, 17, _Joint2D_target_x[j] ) | b2u_jchanged( j, 18, _Joint2D_target_y[j] );
 		float lower = _Joint2D_lower[j];
 		float upper = _Joint2D_upper[j] > lower ? _Joint2D_upper[j] : lower;
 		switch ( _Joint2D_kind[j] )
@@ -746,6 +830,48 @@ static void b2u_push_joints( void )
 				if ( lim )
 					b2WheelJoint_SetLimits( id, lower, upper );
 				break;
+			case 6:
+			case 7:
+				if ( maxf )
+				{{
+					b2MotorJoint_SetMaxVelocityForce( id, _Joint2D_max_force[j] );
+					b2MotorJoint_SetMaxVelocityTorque( id, _Joint2D_max_torque[j] );
+					if ( _Joint2D_kind[j] == 7 )
+					{{
+						b2MotorJoint_SetMaxSpringForce( id, _Joint2D_max_force[j] );
+						b2MotorJoint_SetMaxSpringTorque( id, _Joint2D_max_torque[j] );
+					}}
+				}}
+				if ( corr && _Joint2D_kind[j] == 7 )
+				{{
+					b2MotorJoint_SetLinearHertz( id, b2u_correction_hertz( j ) );
+					b2MotorJoint_SetAngularHertz( id, b2u_correction_hertz( j ) );
+				}}
+				if ( off && _Joint2D_kind[j] == 7 )
+				{{
+					b2Transform frame = {{ {{ _Joint2D_offset_x[j], _Joint2D_offset_y[j] }},
+										   b2MakeRot( _Joint2D_offset_angle[j] * B2U_DEG ) }};
+					b2Joint_SetLocalFrameA( id, frame );
+					b2Joint_WakeBodies( id );
+				}}
+				break;
+			case 8:
+				if ( maxf )
+					b2MotorJoint_SetMaxSpringForce( id, _Joint2D_max_force[j] );
+				if ( spring )
+				{{
+					b2MotorJoint_SetLinearHertz( id, _Joint2D_frequency[j] );
+					b2MotorJoint_SetLinearDampingRatio( id, _Joint2D_damping[j] );
+				}}
+				if ( target )
+				{{
+					/* the ground's frame is the target (its rotation kept: the body turns freely) */
+					b2Transform frame = b2Joint_GetLocalFrameA( id );
+					frame.p = (b2Vec2){{ _Joint2D_target_x[j], _Joint2D_target_y[j] }};
+					b2Joint_SetLocalFrameA( id, frame );
+					b2Joint_WakeBodies( id );
+				}}
+				break;
 			default:
 				break;
 		}}
@@ -760,6 +886,10 @@ static void b2u_pull_joints( void )
 		if ( !b2u_joint_live[j] )
 			continue;
 		b2JointId id = b2u_joint[j];
+		b2Vec2 force = b2Joint_GetConstraintForce( id );
+		_Joint2D_out_force_x[j] = force.x;
+		_Joint2D_out_force_y[j] = force.y;
+		_Joint2D_out_torque[j] = b2Joint_GetConstraintTorque( id );
 		float wa = b2Body_GetAngularVelocity( b2Joint_GetBodyA( id ) );
 		float wb = b2Body_GetAngularVelocity( b2Joint_GetBodyB( id ) );
 		switch ( _Joint2D_kind[j] )
@@ -795,8 +925,13 @@ static void b2u_pull_joints( void )
 		int j = broken[i];
 		if ( !b2u_joint_live[j] )
 			continue;
-		b2DestroyJoint( b2u_joint[j] );
-		b2u_joint_live[j] = 0;
+		/* JointBreakAction2D: CallbackOnly (1) keeps the joint; Disable (2) and Destroy (3)
+		 * remove it -- a disabled one comes back when a script enables it */
+		if ( _Joint2D_break_action[j] >= 2 )
+		{{
+			b2DestroyJoint( b2u_joint[j] );
+			b2u_joint_live[j] = 0;
+		}}
 		engine_joint2d_broken( j );
 	}}
 }}
@@ -806,11 +941,13 @@ static void b2u_pull_joints( void )
 def _with_joints( glue, n ):
     """
     2D joints (plan["physics2d_joints"], unity mode): HingeJoint2D, DistanceJoint2D, SpringJoint2D,
-    FixedJoint2D, SliderJoint2D, WheelJoint2D from unity_pack's _Joint2D_* tables. They are built
+    FixedJoint2D, SliderJoint2D, WheelJoint2D, and FrictionJoint2D / RelativeJoint2D /
+    TargetJoint2D as motor joints, from unity_pack's _Joint2D_* tables. They are built
     with the bodies (b2u_ensure: a script's Start sees them), each step pushes what scripts changed
-    (enabled, motor, limits, distance, spring, break thresholds) and pulls the joint angle, speed
-    and translation back; a joint past its breakForce / breakTorque is destroyed and reported with
-    engine_joint2d_broken( j ).
+    (enabled, motor, limits, distance, spring, forces, offsets, target, break thresholds and action)
+    and pulls the joint angle, speed, translation and reaction force / torque back; a joint past
+    its breakForce / breakTorque is reported with engine_joint2d_broken( j ) and, by its
+    JointBreakAction2D, kept (CallbackOnly), or removed (Disable, Destroy).
     """
     functions = JOINT_FUNCTIONS.format( N=max( 1, int( n ) ) )
     ensure_end = "\n}\n\nvoid engine_box2d_step( void )\n{"
@@ -823,7 +960,7 @@ def _with_joints( glue, n ):
                          "\n\tif ( b2u_joints_ready == 0 && b2u_rb_created >= _Rigidbody2D_count )\n"
                          "\t\tb2u_create_joints();" + ensure_end, 1 )
     step = "\tfloat dt = Time_fixedDeltaTime > 1e-8f ? Time_fixedDeltaTime : "
-    assert step in glue, "box2d_unity: joints marker (step) not found"
+    assert glue.count( step ) == 1, "box2d_unity: joints marker (step) not found once"
     glue = glue.replace( step, "\tb2u_push_joints();\n\n" + step, 1 )
     pulled = "\t/* unity_pack sends Enter / Stay / Exit by comparing with the previous step */\n"
     assert pulled in glue, "box2d_unity: joints marker (pull) not found"
