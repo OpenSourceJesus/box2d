@@ -50,8 +50,13 @@ Mapping:
     BoxCollider2D / CircleCollider2D          ->  offset box / circle, rotated by the collider
     CapsuleCollider2D                         ->  capsule along m_Direction (circle when short)
     Collider2D without a Rigidbody2D          ->  static body at the collider center
-    m_IsTrigger                               ->  sensor, no collision messages
-    Rigidbody2D mass                          ->  body mass
+    m_IsTrigger                               ->  sensor, no collision messages; with
+                                                  plan["physics2d_triggers"] its overlaps are
+                                                  reported with engine_col2d_trigger( a, b )
+                                                  for OnTrigger*2D (standard API only)
+    Rigidbody2D mass                          ->  body mass (and again when a script changes it)
+    Rigidbody2D bodyType / isKinematic        ->  body type, and b2Body_SetType when a script
+                                                  changes it
     friction / bounciness + combine modes     ->  world friction / restitution callbacks that
                                                   apply Unity's PhysicsMaterialCombine rules
 
@@ -131,6 +136,8 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
         glue = _with_live_gate( glue )
     if plan.get( "physics2d_contacts" ):
         glue = _with_contact_manifolds( glue )
+    if plan.get( "physics2d_triggers" ) and mode == "unity":
+        glue = _with_unity_triggers( glue )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -257,6 +264,100 @@ def _with_contact_manifolds( glue ):
         if glue.count( old ) != 1:
             raise ValueError( "box2d_unity: contact anchor not found: %r" % old[:60] )
         glue = glue.replace( old, new )
+    return glue
+
+
+def _with_unity_triggers( glue ):
+    """
+    OnTriggerEnter2D / Stay2D / Exit2D (plan["physics2d_triggers"], unity mode). Every shape takes
+    sensor events -- a trigger collider is a sensor already -- and the overlapping sensor pairs are
+    kept from Box2D's sensor begin and end events, apart from the touching pairs, and reported after
+    the step with
+
+        void engine_col2d_trigger( int a, int b );
+
+    unity_pack sends the messages by comparing them with the step before, as it does collisions.
+    Standard API only: with --physics-inject the triggers stay silent.
+    """
+    glue = glue.replace(
+        "\tdef.enableContactEvents = _Collider2D_is_trigger[ci] == 0;\n",
+        "\tdef.enableContactEvents = _Collider2D_is_trigger[ci] == 0;\n"
+        "\t/* OnTrigger*2D: every shape takes sensor events */\n"
+        "\tdef.enableSensorEvents = true;\n", 1 )
+    glue = glue.replace(
+        "void b2u_on_begin( int colliderA, int colliderB );\n",
+        "void b2u_on_begin( int colliderA, int colliderB );\n"
+        "void engine_col2d_trigger( int a, int b );\n", 1 )
+    storage = (
+        "/* Overlapping sensor pairs, lo < hi, for OnTrigger*2D */\n"
+        "static int b2u_trig_a[B2U_MAX_PAIRS];\n"
+        "static int b2u_trig_b[B2U_MAX_PAIRS];\n"
+        "static int b2u_trig_n;\n\n"
+        "static void b2u_trig_begin( int a, int b )\n"
+        "{\n"
+        "\tint lo = a < b ? a : b;\n"
+        "\tint hi = a < b ? b : a;\n"
+        "\tif ( lo < 0 || lo == hi )\n"
+        "\t\treturn;\n"
+        "\tfor ( int i = 0; i < b2u_trig_n; ++i )\n"
+        "\t\tif ( b2u_trig_a[i] == lo && b2u_trig_b[i] == hi )\n"
+        "\t\t\treturn;\n"
+        "\tif ( b2u_trig_n < B2U_MAX_PAIRS )\n"
+        "\t{\n"
+        "\t\tb2u_trig_a[b2u_trig_n] = lo;\n"
+        "\t\tb2u_trig_b[b2u_trig_n] = hi;\n"
+        "\t\tb2u_trig_n += 1;\n"
+        "\t}\n"
+        "}\n\n"
+        "static void b2u_trig_end( int a, int b )\n"
+        "{\n"
+        "\tint lo = a < b ? a : b;\n"
+        "\tint hi = a < b ? b : a;\n"
+        "\tfor ( int i = 0; i < b2u_trig_n; ++i )\n"
+        "\t{\n"
+        "\t\tif ( b2u_trig_a[i] == lo && b2u_trig_b[i] == hi )\n"
+        "\t\t{\n"
+        "\t\t\tfor ( int k = i + 1; k < b2u_trig_n; ++k )\n"
+        "\t\t\t{\n"
+        "\t\t\t\tb2u_trig_a[k - 1] = b2u_trig_a[k];\n"
+        "\t\t\t\tb2u_trig_b[k - 1] = b2u_trig_b[k];\n"
+        "\t\t\t}\n"
+        "\t\t\tb2u_trig_n -= 1;\n"
+        "\t\t\treturn;\n"
+        "\t\t}\n"
+        "\t}\n"
+        "}\n\n" )
+    glue = glue.replace( "void b2u_on_begin( int colliderA, int colliderB )\n{",
+                         storage + "void b2u_on_begin( int colliderA, int colliderB )\n{", 1 )
+    events = (
+        "\t/* OnTrigger*2D: sensor overlaps, apart from the touching pairs */\n"
+        "\tb2SensorEvents sensors = b2World_GetSensorEvents( b2u_world );\n"
+        "\tfor ( int i = 0; i < sensors.beginCount; ++i )\n"
+        "\t{\n"
+        "\t\tb2SensorBeginTouchEvent* e = sensors.beginEvents + i;\n"
+        "\t\tb2u_trig_begin( (int)(intptr_t)b2Shape_GetUserData( e->sensorShapeId ) - 1,\n"
+        "\t\t\t\t\t\t(int)(intptr_t)b2Shape_GetUserData( e->visitorShapeId ) - 1 );\n"
+        "\t}\n"
+        "\tfor ( int i = 0; i < sensors.endCount; ++i )\n"
+        "\t{\n"
+        "\t\tb2SensorEndTouchEvent* e = sensors.endEvents + i;\n"
+        "\t\tif ( b2Shape_IsValid( e->sensorShapeId ) && b2Shape_IsValid( e->visitorShapeId ) )\n"
+        "\t\t{\n"
+        "\t\t\tb2u_trig_end( (int)(intptr_t)b2Shape_GetUserData( e->sensorShapeId ) - 1,\n"
+        "\t\t\t\t\t\t  (int)(intptr_t)b2Shape_GetUserData( e->visitorShapeId ) - 1 );\n"
+        "\t\t}\n"
+        "\t}\n" )
+    marker = "#endif\n\n\t/* Pull positions and velocities into the packed tables */"
+    assert marker in glue, "box2d_unity: trigger events marker not found"
+    glue = glue.replace( marker, events + marker, 1 )
+    report_marker = "\t/* unity_pack sends Enter / Stay / Exit by comparing with the previous step */\n"
+    assert report_marker in glue, "box2d_unity: trigger report marker not found"
+    glue = glue.replace(
+        report_marker,
+        "\tfor ( int i = 0; i < b2u_trig_n; ++i )\n"
+        "\t{\n"
+        "\t\tengine_col2d_trigger( b2u_trig_a[i], b2u_trig_b[i] );\n"
+        "\t}\n" + report_marker, 1 )
     return glue
 
 
@@ -445,6 +546,9 @@ static b2WorldId b2u_world;
 static b2BodyId b2u_rb_body[B2U_MAX_RB];
 static float b2u_last_x[B2U_MAX_RB];
 static float b2u_last_y[B2U_MAX_RB];
+/* Rigidbody2D.mass / bodyType as last pushed: a script may change them */
+static float b2u_last_mass[B2U_MAX_RB];
+static int b2u_last_type[B2U_MAX_RB];
 
 /* Static bodies of the colliders without a Rigidbody2D */
 static b2BodyId b2u_col_body[B2U_MAX_COL];
@@ -582,6 +686,8 @@ static void b2u_create_body( int rb )
 		md.mass = mass;
 		b2Body_SetMassData( bodyId, md );
 	}}
+	b2u_last_mass[rb] = _Rigidbody2D_mass[rb];
+	b2u_last_type[rb] = _Rigidbody2D_body_type[rb];
 }}
 
 static void b2u_create( void )
@@ -651,6 +757,27 @@ void engine_box2d_step( void )
 		{{
 			/* transform.position written by a script */
 			b2Body_SetTransform( bodyId, (b2Pos){{ x, y }}, b2Rot_identity );
+		}}
+		if ( _Rigidbody2D_body_type[rb] != b2u_last_type[rb] )
+		{{
+			/* Rigidbody2D.bodyType / isKinematic written by a script */
+			b2Body_SetType( bodyId, b2u_body_type( _Rigidbody2D_body_type[rb] ) );
+			b2u_last_type[rb] = _Rigidbody2D_body_type[rb];
+			b2u_last_mass[rb] = -1.0f;
+		}}
+		if ( _Rigidbody2D_body_type[rb] == 0 && _Rigidbody2D_mass[rb] > 0.0f &&
+			 _Rigidbody2D_mass[rb] != b2u_last_mass[rb] )
+		{{
+			/* Rigidbody2D.mass written by a script: the mass data scaled to it */
+			b2MassData md = b2Body_GetMassData( bodyId );
+			float mass = _Rigidbody2D_mass[rb];
+			if ( md.mass > 0.0f )
+			{{
+				md.rotationalInertia *= mass / md.mass;
+			}}
+			md.mass = mass;
+			b2Body_SetMassData( bodyId, md );
+			b2u_last_mass[rb] = mass;
 		}}
 		if ( _Rigidbody2D_body_type[rb] != 2 )
 		{{
