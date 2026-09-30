@@ -30,7 +30,8 @@ engine.c exports what the glue needs, in unity_pack's C subset:
     void engine_col2d_contact( int a, int b );               report a touching pair
 
 With plan["physics2d_live"] (unity_pack sets it when some GameObjects can leave the simulation,
-e.g. scenes that are not loaded) it also exports
+e.g. scenes that are not loaded, or objects destroyed -- Destroy, Godot's QueueFree) it also
+exports
 
     int engine_rb2d_live( int rb );                          owner in the simulation
     int engine_col2d_live( int ci );                         static collider in the simulation
@@ -86,6 +87,11 @@ what Godot means by them:
                                   that d, and the glue sets the Box2D damping whose substeps
                                   compound to the same factor
     fixed step                ->  1/60 s when Time_fixedDeltaTime is unset (physics ticks 60)
+    collision layers          ->  with plan["physics2d_layers"], Godot's collision_layer /
+                                  collision_mask (_Collider2D_layer_bits / _mask_bits): a pair
+                                  collides when a dynamic side's mask has the other's layer
+                                  (the side Godot pushes); areas' overlaps are godot_pack's to
+                                  filter (_with_godot_layers)
     Area2D (a sensor)         ->  overlaps: every shape takes sensor events, and a sensor's begin
                                   and end touch report the pair with engine_col2d_contact, as a
                                   contact does -- godot_pack sends body_entered / area_entered from
@@ -152,6 +158,8 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
         glue = _with_unity_triggers( glue )
     if plan.get( "physics2d_queries" ):
         glue = _with_query_layers( glue ) + QUERY_FUNCTIONS
+    if plan.get( "physics2d_layers" ) and mode == "godot":
+        glue = _with_godot_layers( glue )
     if plan.get( "physics2d_rotation" ) and mode == "unity":
         glue = _with_rotation( glue )
     if plan.get( "physics2d_joints" ) and mode == "unity":
@@ -1732,6 +1740,50 @@ GODOT_SENSOR_EVENTS = """\t/* Godot: Area2D overlaps, reported as touching pairs
 \t\t}
 \t}
 """
+
+
+def _with_godot_layers( glue ):
+    """Godot's collision layers (godot_pack's _Collider2D_layer_bits / _mask_bits, 32 bits
+    each), as Godot's physics decides a body pair (godot_body_pair_2d.cpp): a dynamic body is
+    pushed by what its mask has the layer of. A Box2D contact pushes both of a pair's bodies, so
+    the pair collides when either dynamic side's mask has the other's layer -- exact whenever one
+    side is static or kinematic (godot_pack warns about the rest). A sensor (an Area2D) sees
+    every shape: which overlaps an area reports is godot_pack's dispatch's (its mask)."""
+    glue = glue.replace(
+        "void engine_box2d_step( void );\n",
+        "void engine_box2d_step( void );\n"
+        "extern const unsigned _Collider2D_layer_bits[];\n"
+        "extern const unsigned _Collider2D_mask_bits[];\n", 1 )
+    filt = (
+        "/* Godot's collision layers: a pair collides when a dynamic side's mask has the other's\n"
+        " * layer (the side Godot pushes); a sensor sees all, its reports filtered by godot_pack */\n"
+        "static bool b2g_layer_filter( b2ShapeId a, b2ShapeId b, void* context )\n"
+        "{\n"
+        "\t(void)context;\n"
+        "\tif ( b2Shape_IsSensor( a ) || b2Shape_IsSensor( b ) )\n"
+        "\t\treturn true;\n"
+        "\tint ca = (int)(intptr_t)b2Shape_GetUserData( a ) - 1;\n"
+        "\tint cb = (int)(intptr_t)b2Shape_GetUserData( b ) - 1;\n"
+        "\tif ( ca < 0 || cb < 0 )\n"
+        "\t\treturn true;\n"
+        "\tint dynA = b2Body_GetType( b2Shape_GetBody( a ) ) == b2_dynamicBody;\n"
+        "\tint dynB = b2Body_GetType( b2Shape_GetBody( b ) ) == b2_dynamicBody;\n"
+        "\treturn ( dynA && ( _Collider2D_mask_bits[ca] & _Collider2D_layer_bits[cb] ) != 0 ) ||\n"
+        "\t\t   ( dynB && ( _Collider2D_mask_bits[cb] & _Collider2D_layer_bits[ca] ) != 0 );\n"
+        "}\n\n" )
+    anchor = "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n"
+    if anchor not in glue:
+        raise ValueError( "box2d_unity: no shape creation to add Godot's layers to" )
+    glue = glue.replace( anchor, filt + anchor, 1 )
+    glue = glue.replace(
+        "\tdef.isSensor = _Collider2D_is_trigger[ci] != 0;\n",
+        "\tdef.isSensor = _Collider2D_is_trigger[ci] != 0;\n"
+        "\tdef.enableCustomFiltering = true; /* Godot's layers: b2g_layer_filter */\n", 1 )
+    glue = glue.replace(
+        "\tb2u_world = b2CreateWorld( &worldDef );\n",
+        "\tb2u_world = b2CreateWorld( &worldDef );\n"
+        "\tb2World_SetCustomFilterCallback( b2u_world, b2g_layer_filter, NULL );\n", 1 )
+    return glue
 
 
 def _mode_parts( mode, length_units_per_meter ):
