@@ -38,8 +38,8 @@ exports
 
 and bodies whose owner is not live are disabled (b2Body_Disable) until it is again.
 
-With plan["physics2d_queries"] it exports Physics2D.Raycast / OverlapCircle / OverlapPoint for the
-engine (a collider index, -1 for none); with plan["physics2d_rotation"] bodies turn (see
+It always exports Physics2D.Raycast / OverlapCircle / OverlapPoint for the engine (a collider
+index, -1 for none; see QUERY_FUNCTIONS); with plan["physics2d_rotation"] bodies turn (see
 _with_rotation) instead of having their rotation locked.
 
 With plan["physics2d_joints"] it builds unity_pack's 2D joints (HingeJoint2D, DistanceJoint2D,
@@ -156,8 +156,7 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
         glue = _with_contact_manifolds( glue )
     if plan.get( "physics2d_triggers" ) and mode == "unity":
         glue = _with_unity_triggers( glue )
-    if plan.get( "physics2d_queries" ):
-        glue = _with_query_layers( glue ) + QUERY_FUNCTIONS
+    glue += QUERY_FUNCTIONS
     if plan.get( "physics2d_layers" ) and mode == "godot":
         glue = _with_godot_layers( glue )
     if plan.get( "physics2d_rotation" ) and mode == "unity":
@@ -313,14 +312,14 @@ def _with_contact_manifolds( glue ):
     return glue
 
 
-#: Physics2D.Raycast / RaycastAll / OverlapCircle / OverlapCircleAll / OverlapPoint
-#: (plan["physics2d_queries"]), with Unity's layerMask. Each returns the collider index hit (-1
+#: Physics2D.Raycast / RaycastAll / OverlapCircle / OverlapCircleAll / OverlapPoint, with Unity's
+#: layerMask, in every glue (unused ones cost nothing). Each returns the collider index hit (-1
 #: for none), or how many. Triggers are hit, as Unity's queriesHitTriggers default has
 #: it; a ray ignores a collider it starts inside, where Unity's queriesStartInColliders default
 #: would hit it.
 QUERY_FUNCTIONS = """
-/* Physics2D queries for unity_pack (plan["physics2d_queries"]). Unity's layerMask is tested
- * against each collider's layer (m_Layer) in the callbacks: Box2D-Packed's filters are 16 bits. */
+/* Physics2D queries for unity_pack. Unity's layerMask is tested against each collider's layer
+ * (m_Layer) in the callbacks: Box2D-Packed's filters are 16 bits. */
 #include <math.h>
 int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, unsigned int mask, float* out );
 int engine_box2d_raycast_all( float ox, float oy, float dx, float dy, float distance, unsigned int mask,
@@ -1000,14 +999,6 @@ def _with_joints( glue, n ):
     return glue
 
 
-def _with_query_layers( glue ):
-    """The queries read each collider's layer (unity_pack's _Collider2D_layer). Box2D-Packed's
-    filters are 16 bits and Unity has 32 layers, so a query's layer mask is tested in its callbacks
-    rather than as shape categories: shapes and contacts are as before."""
-    return glue.replace( "void engine_box2d_step( void );\n",
-                         "void engine_box2d_step( void );\nextern const int _Collider2D_layer[];\n", 1 )
-
-
 def _with_rotation( glue ):
     """
     Rigidbody2D rotation (plan["physics2d_rotation"], unity mode). A body turns unless its
@@ -1204,6 +1195,7 @@ extern const float _Collider2D_friction[];
 extern const float _Collider2D_bounciness[];
 extern const int _Collider2D_friction_combine[];
 extern const int _Collider2D_bounce_combine[];
+extern const int _Collider2D_layer[];
 """
 
 CONTACT_EXPORTS = """void engine_col2d_manifold( int a, int b, float nx, float ny, int n, float p0x, float p0y,

@@ -247,8 +247,8 @@ played backwards (a negative speed) now stops at its start.
 layerMask]])`, `RaycastAll`, `OverlapCircle(point, radius[, layerMask])`,
 `OverlapCircleAll`, `OverlapPoint(point[, layerMask])` and
 `OverlapPointAll` are Box2D-Packed's (`engine_box2d_raycast[_all]` /
-`_overlap_circle[_all]` / `_overlap_point`, the plan's
-`physics2d_queries`), and may run before the first step (a script's
+`_overlap_circle[_all]` / `_overlap_point`, in every glue), and may run
+before the first step (a script's
 `Start`: the glue builds the world first). `RaycastAll` is nearest first,
 as Unity's; the `*All` arrays (`RaycastHit2D[]`, `Collider2D[]`) are lists,
 so `foreach`, `hits[i]` and `.Length` work. A
