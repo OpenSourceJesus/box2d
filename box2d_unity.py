@@ -314,13 +314,15 @@ def _with_contact_manifolds( glue ):
 
 #: Physics2D.Raycast / RaycastAll / OverlapCircle / OverlapCircleAll / OverlapPoint, with Unity's
 #: layerMask, in every glue (unused ones cost nothing). Each returns the collider index hit (-1
-#: for none), or how many. Triggers are hit, as Unity's queriesHitTriggers default has
-#: it; a ray ignores a collider it starts inside, where Unity's queriesStartInColliders default
-#: would hit it.
+#: for none), or how many. Triggers are hit, as Unity's queriesHitTriggers default has it. A ray
+#: starting inside a collider hits it at its origin (distance 0, normal against the ray) while
+#: engine_box2d_queries_start_in_colliders is set, Physics2D.queriesStartInColliders (default
+#: true); cleared, the ray passes through that collider.
 QUERY_FUNCTIONS = """
 /* Physics2D queries for unity_pack. Unity's layerMask is tested against each collider's layer
  * (m_Layer) in the callbacks: Box2D-Packed's filters are 16 bits. */
 #include <math.h>
+int engine_box2d_queries_start_in_colliders = 1;
 int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance, unsigned int mask, float* out );
 int engine_box2d_raycast_all( float ox, float oy, float dx, float dy, float distance, unsigned int mask,
 							  float* out, int* colliders, int max );
@@ -357,12 +359,40 @@ typedef struct b2uRayAll
 	int n, max, closest;
 	float distance;
 	unsigned int mask;
+	const int* inside;
+	int n_inside;
 } b2uRayAll;
+
+/* ponytail: the first 8 colliders holding a ray's origin; a 9th is cast through as an edge */
+#define B2U_MAX_INSIDE 8
+
+/* The colliders on the mask that hold the ray's origin: hit there, or passed through */
+static int b2u_inside( float x, float y, unsigned int mask, int* inside )
+{
+	return engine_box2d_overlap_circle_all( x, y, 0.0f, mask, inside, B2U_MAX_INSIDE );
+}
+
+/* A hit at the origin of a ray that starts inside a collider: distance 0, normal against the ray */
+static void b2u_start_hit( float ox, float oy, b2Vec2 translation, float* o )
+{
+	b2Vec2 n = b2Normalize( translation );
+	o[0] = ox;
+	o[1] = oy;
+	o[2] = -n.x;
+	o[3] = -n.y;
+	o[4] = 0.0f;
+	o[5] = 0.0f;
+}
 
 static float b2u_ray_hit( b2ShapeId shapeId, b2Pos point, b2Vec2 normal, float fraction, void* context )
 {
 	b2uRayAll* all = context;
 	int ci = b2u_query_collider( shapeId, all->mask );
+	for ( int i = 0; ci >= 0 && i < all->n_inside; ++i )
+	{
+		if ( all->inside[i] == ci )
+			ci = -1; /* a polygon's inner edge, or a collider it started in */
+	}
 	if ( ci < 0 )
 		return -1.0f; /* not on the mask: ignore it, go on */
 	int k = all->closest ? 0 : all->n;
@@ -392,8 +422,15 @@ int engine_box2d_raycast( float ox, float oy, float dx, float dy, float distance
 	b2Vec2 translation;
 	if ( b2u_ray( dx, dy, &distance, &translation ) == 0 )
 		return -1;
+	int inside[B2U_MAX_INSIDE];
+	int n_inside = b2u_inside( ox, oy, mask, inside );
+	if ( n_inside > 0 && engine_box2d_queries_start_in_colliders )
+	{
+		b2u_start_hit( ox, oy, translation, out );
+		return inside[0];
+	}
 	int collider = -1;
-	b2uRayAll one = { out, &collider, 0, 1, 1, distance, mask };
+	b2uRayAll one = { out, &collider, 0, 1, 1, distance, mask, inside, n_inside };
 	b2World_CastRay( b2u_world, (b2Pos){ ox, oy }, translation, b2DefaultQueryFilter(), b2u_ray_hit, &one );
 	return one.n > 0 ? collider : -1;
 }
@@ -406,7 +443,15 @@ int engine_box2d_raycast_all( float ox, float oy, float dx, float dy, float dist
 	b2Vec2 translation;
 	if ( b2u_ray( dx, dy, &distance, &translation ) == 0 )
 		return 0;
-	b2uRayAll all = { out, colliders, 0, max, 0, distance, mask };
+	int inside[B2U_MAX_INSIDE];
+	int n_inside = b2u_inside( ox, oy, mask, inside );
+	int n = 0;
+	for ( ; engine_box2d_queries_start_in_colliders && n < n_inside && n < max; ++n )
+	{
+		b2u_start_hit( ox, oy, translation, out + 6 * n );
+		colliders[n] = inside[n];
+	}
+	b2uRayAll all = { out, colliders, n, max, 0, distance, mask, inside, n_inside };
 	b2World_CastRay( b2u_world, (b2Pos){ ox, oy }, translation, b2DefaultQueryFilter(), b2u_ray_hit, &all );
 	for ( int i = 1; i < all.n; ++i )
 	{

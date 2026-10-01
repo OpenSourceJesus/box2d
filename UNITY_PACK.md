@@ -258,8 +258,11 @@ and `hit.collider`, `hit.transform` and a `Collider2D` an overlap returns
 read their GameObject as a handler's parameter does (`.gameObject`,
 `.name`, `.tag`, `CompareTag`, `GetComponent<T>()`); `transform.position`
 as the origin is taken by its x and y. Triggers are hit, as Unity's
-`queriesHitTriggers` default has it, and a ray ignores a collider it
-starts inside (Unity's `queriesStartInColliders` default would hit it). The
+`queriesHitTriggers` default has it. A ray starting inside a collider
+hits it at its origin (distance 0, normal against the ray) while
+`Physics2D.queriesStartInColliders` is true, Unity's default, and passes
+through it once a script clears it (`engine_box2d_queries_start_in_colliders`).
+A polygon collider is one collider to a query, however many shapes it is. The
 `*NonAlloc` forms are not lowered.
 
 **Layers.** Each collider has its GameObject's `m_Layer`
