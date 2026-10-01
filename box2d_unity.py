@@ -438,6 +438,11 @@ static bool b2u_overlap_collect( b2ShapeId shapeId, void* context )
 {
 	b2uOverlap* o = context;
 	int ci = b2u_query_collider( shapeId, o->mask );
+	for ( int i = 0; ci >= 0 && i < o->n; ++i )
+	{
+		if ( o->colliders[i] == ci )
+			ci = -1; /* another shape of a polygon collider already in */
+	}
 	if ( ci >= 0 && o->n < o->max )
 	{
 		o->colliders[o->n] = ci;
