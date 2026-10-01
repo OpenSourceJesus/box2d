@@ -61,6 +61,8 @@ Mapping:
                                                   and then locked by FreezeRotation only
     BoxCollider2D / CircleCollider2D          ->  offset box / circle, rotated by the collider
     CapsuleCollider2D                         ->  capsule along m_Direction (circle when short)
+    PolygonCollider2D                         ->  a triangle polygon per triangle of its paths
+                                                  (plan["physics2d_polygons"], see _with_polygons)
     Collider2D without a Rigidbody2D          ->  static body at the collider center
     m_IsTrigger                               ->  sensor, no collision messages; with
                                                   plan["physics2d_triggers"] its overlaps are
@@ -166,6 +168,8 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
         # the authored joints and AddComponent's spares
         glue = _with_joints( glue, max( len( plan.get( "joints2d" ) or [] ),
                                         int( plan.get( "joints2d_cap" ) or 0 ) ) )
+    if plan.get( "physics2d_polygons" ):
+        glue = _with_polygons( glue, bool( plan.get( "physics2d_contacts" ) ) )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -1171,6 +1175,110 @@ def _with_unity_triggers( glue ):
         "\t{\n"
         "\t\tengine_col2d_trigger( b2u_trig_a[i], b2u_trig_b[i] );\n"
         "\t}\n" + report_marker, 1 )
+    return glue
+
+
+POLYGON_SHAPES = """/* PolygonCollider2D (kind 4): its paths as the triangles unity_pack cut them into, in the
+ * collider's frame about its center; one convex polygon shape each, all the collider's */
+static void b2u_add_polygon( b2BodyId bodyId, const b2ShapeDef* def, int ci, b2Vec2 offset )
+{
+	b2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };
+	int t0 = _Collider2D_tri_start[ci];
+	for ( int t = t0; t < t0 + _Collider2D_tri_count[ci]; ++t )
+	{
+		b2Vec2 p[3];
+		for ( int k = 0; k < 3; ++k )
+		{
+			b2Vec2 v = { _Collider2D_tri_xy[6 * t + 2 * k], _Collider2D_tri_xy[6 * t + 2 * k + 1] };
+			p[k] = b2Add( offset, b2RotateVector( rotation, v ) );
+		}
+		b2Hull hull = b2ComputeHull( p, 3 );
+		if ( hull.count == 0 )
+			continue; /* a sliver thinner than Box2D's linear slop */
+		b2Polygon tri = b2MakePolygon( &hull, 0.0f );
+		b2ShapeId shapeId = b2CreatePolygonShape( bodyId, def, &tri );
+{KEEP_SHAPE}		(void)shapeId;
+	}
+}
+
+"""
+
+#: With manifolds, a polygon collider's pair reads its first triangle's contact.
+POLYGON_KEEP_SHAPE = """\t\tif ( b2u_col_has_shape[ci] == 0 )
+\t\t{
+\t\t\tb2u_col_shape[ci] = shapeId;
+\t\t\tb2u_col_has_shape[ci] = 1;
+\t\t}
+"""
+
+
+def _with_polygons( glue, contacts=False ):
+    """
+    PolygonCollider2D (plan["physics2d_polygons"]): collider kind 4, whose triangles are in
+
+        extern const int _Collider2D_tri_start[];   first triangle of each collider
+        extern const int _Collider2D_tri_count[];   how many (0 for other kinds)
+        extern const float _Collider2D_tri_xy[];    x0 y0 x1 y1 x2 y2 per triangle
+
+    Box2D's polygons are convex and of at most 8 vertices, so a collider is several shapes, and a
+    pair of colliders touches through several shape pairs: the touching and overlapping pairs are
+    counted, and a pair ends when its last shape pair does.
+    """
+    edits = [
+        ( "extern const int _Collider2D_bounce_combine[];\n",
+          "extern const int _Collider2D_bounce_combine[];\n"
+          "extern const int _Collider2D_tri_start[];\n"
+          "extern const int _Collider2D_tri_count[];\n"
+          "extern const float _Collider2D_tri_xy[];\n" ),
+        ( "static int b2u_pair_n;\n",
+          "static int b2u_pair_n;\n"
+          "/* How many shape pairs touch in each pair: a polygon collider is several shapes */\n"
+          "static int b2u_pair_refs[B2U_MAX_PAIRS];\n" ),
+        ( "\t\tif ( b2u_pair_a[i] == lo && b2u_pair_b[i] == hi )\n\t\t{\n\t\t\treturn;\n",
+          "\t\tif ( b2u_pair_a[i] == lo && b2u_pair_b[i] == hi )\n\t\t{\n"
+          "\t\t\tb2u_pair_refs[i] += 1;\n\t\t\treturn;\n" ),
+        ( "\t\tb2u_pair_b[b2u_pair_n] = hi;\n",
+          "\t\tb2u_pair_b[b2u_pair_n] = hi;\n\t\tb2u_pair_refs[b2u_pair_n] = 1;\n" ),
+        ( "\t\t\t/* Keep order stable, messages are sent in pair order */\n",
+          "\t\t\tb2u_pair_refs[i] -= 1;\n\t\t\tif ( b2u_pair_refs[i] > 0 )\n\t\t\t\treturn;\n"
+          "\t\t\t/* Keep order stable, messages are sent in pair order */\n" ),
+        ( "\t\t\t\tb2u_pair_b[k - 1] = b2u_pair_b[k];\n",
+          "\t\t\t\tb2u_pair_b[k - 1] = b2u_pair_b[k];\n"
+          "\t\t\t\tb2u_pair_refs[k - 1] = b2u_pair_refs[k];\n" ),
+        ( "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n",
+          POLYGON_SHAPES.replace( "{KEEP_SHAPE}", POLYGON_KEEP_SHAPE if contacts else "" )
+          + "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n" ),
+        ( "\tb2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };\n\t/* CapsuleCollider2D",
+          "\tif ( _Collider2D_kind[ci] == 4 )\n\t{\n"
+          "\t\tb2u_add_polygon( bodyId, &def, ci, offset );\n\t\treturn;\n\t}\n"
+          "\tb2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };\n\t/* CapsuleCollider2D" ),
+    ]
+    # the live gate's forgetting and the trigger pairs, when the glue has them
+    optional = [
+        ( "\t\tb2u_pair_b[k] = b;\n\t\tk += 1;\n",
+          "\t\tb2u_pair_b[k] = b;\n\t\tb2u_pair_refs[k] = b2u_pair_refs[i];\n\t\tk += 1;\n" ),
+        ( "static int b2u_trig_n;\n",
+          "static int b2u_trig_n;\nstatic int b2u_trig_refs[B2U_MAX_PAIRS];\n" ),
+        ( "\t\tif ( b2u_trig_a[i] == lo && b2u_trig_b[i] == hi )\n\t\t\treturn;\n",
+          "\t\tif ( b2u_trig_a[i] == lo && b2u_trig_b[i] == hi )\n\t\t{\n"
+          "\t\t\tb2u_trig_refs[i] += 1;\n\t\t\treturn;\n\t\t}\n" ),
+        ( "\t\tb2u_trig_b[b2u_trig_n] = hi;\n",
+          "\t\tb2u_trig_b[b2u_trig_n] = hi;\n\t\tb2u_trig_refs[b2u_trig_n] = 1;\n" ),
+        ( "\t\t\tfor ( int k = i + 1; k < b2u_trig_n; ++k )\n",
+          "\t\t\tb2u_trig_refs[i] -= 1;\n\t\t\tif ( b2u_trig_refs[i] > 0 )\n\t\t\t\treturn;\n"
+          "\t\t\tfor ( int k = i + 1; k < b2u_trig_n; ++k )\n" ),
+        ( "\t\t\t\tb2u_trig_b[k - 1] = b2u_trig_b[k];\n",
+          "\t\t\t\tb2u_trig_b[k - 1] = b2u_trig_b[k];\n"
+          "\t\t\t\tb2u_trig_refs[k - 1] = b2u_trig_refs[k];\n" ),
+    ]
+    for old, new in edits:
+        if glue.count( old ) != 1:
+            raise ValueError( "box2d_unity: polygon anchor not found: %r" % old[:60] )
+        glue = glue.replace( old, new )
+    for old, new in optional:
+        if glue.count( old ) > 1:
+            raise ValueError( "box2d_unity: polygon anchor not unique: %r" % old[:60] )
+        glue = glue.replace( old, new )
     return glue
 
 
