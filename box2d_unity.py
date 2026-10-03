@@ -169,6 +169,14 @@ def emit_glue( outdir, plan, inject=False, sub_steps=4, mode="unity", length_uni
                                         int( plan.get( "joints2d_cap" ) or 0 ) ) )
     if plan.get( "physics2d_polygons" ):
         glue = _with_polygons( glue, bool( plan.get( "physics2d_contacts" ) ) )
+    if plan.get( "physics2d_terrain" ):
+        if not plan.get( "physics2d_polygons" ):
+            glue = _with_pair_refs( glue )  # a chunk is many shapes, as a polygon collider is
+        chunks = sum( 1 for c in ( plan.get( "collider2d" ) or [] ) if c.get( "kind" ) == TERRAIN_KIND )
+        glue = _with_terrain( glue, max( 1, chunks ), max( 1, int( plan.get( "terrain2d_max_shapes" ) or 256 ) ) )
+        if plan.get( "terrain2d_chains" ):
+            glue = _with_terrain_chains( glue, max( 1, int( plan.get( "terrain2d_max_chains" ) or 64 ) ),
+                                         max( 2, int( plan.get( "terrain2d_max_points" ) or 1024 ) ) )
     paths = []
     glue_path = os.path.join( outdir, GLUE_FILE )
     _write_if_different( glue_path, glue )
@@ -1253,24 +1261,12 @@ POLYGON_KEEP_SHAPE = """\t\tif ( b2u_col_has_shape[ci] == 0 )
 """
 
 
-def _with_polygons( glue, contacts=False ):
+def _with_pair_refs( glue ):
     """
-    PolygonCollider2D (plan["physics2d_polygons"]): collider kind 4, whose triangles are in
-
-        extern const int _Collider2D_tri_start[];   first triangle of each collider
-        extern const int _Collider2D_tri_count[];   how many (0 for other kinds)
-        extern const float _Collider2D_tri_xy[];    x0 y0 x1 y1 x2 y2 per triangle
-
-    Box2D's polygons are convex and of at most 8 vertices, so a collider is several shapes, and a
-    pair of colliders touches through several shape pairs: the touching and overlapping pairs are
-    counted, and a pair ends when its last shape pair does.
+    Count the shape pairs that touch in each collider pair, so a pair ends when its last shape pair
+    does: for colliders of several shapes (PolygonCollider2D triangles, terrain chunks).
     """
     edits = [
-        ( "extern const int _Collider2D_bounce_combine[];\n",
-          "extern const int _Collider2D_bounce_combine[];\n"
-          "extern const int _Collider2D_tri_start[];\n"
-          "extern const int _Collider2D_tri_count[];\n"
-          "extern const float _Collider2D_tri_xy[];\n" ),
         ( "static int b2u_pair_n;\n",
           "static int b2u_pair_n;\n"
           "/* How many shape pairs touch in each pair: a polygon collider is several shapes */\n"
@@ -1286,13 +1282,6 @@ def _with_polygons( glue, contacts=False ):
         ( "\t\t\t\tb2u_pair_b[k - 1] = b2u_pair_b[k];\n",
           "\t\t\t\tb2u_pair_b[k - 1] = b2u_pair_b[k];\n"
           "\t\t\t\tb2u_pair_refs[k - 1] = b2u_pair_refs[k];\n" ),
-        ( "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n",
-          POLYGON_SHAPES.replace( "{KEEP_SHAPE}", POLYGON_KEEP_SHAPE if contacts else "" )
-          + "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n" ),
-        ( "\tb2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };\n\t/* CapsuleCollider2D",
-          "\tif ( _Collider2D_kind[ci] == 4 )\n\t{\n"
-          "\t\tb2u_add_polygon( bodyId, &def, ci, offset );\n\t\treturn;\n\t}\n"
-          "\tb2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };\n\t/* CapsuleCollider2D" ),
     ]
     # the live gate's forgetting and the trigger pairs, when the glue has them
     optional = [
@@ -1314,11 +1303,375 @@ def _with_polygons( glue, contacts=False ):
     ]
     for old, new in edits:
         if glue.count( old ) != 1:
-            raise ValueError( "box2d_unity: polygon anchor not found: %r" % old[:60] )
+            raise ValueError( "box2d_unity: pair-count anchor not found: %r" % old[:60] )
         glue = glue.replace( old, new )
     for old, new in optional:
         if glue.count( old ) > 1:
-            raise ValueError( "box2d_unity: polygon anchor not unique: %r" % old[:60] )
+            raise ValueError( "box2d_unity: pair-count anchor not unique: %r" % old[:60] )
+        glue = glue.replace( old, new )
+    return glue
+
+
+def _with_polygons( glue, contacts=False ):
+    """
+    PolygonCollider2D (plan["physics2d_polygons"]): collider kind 4, whose triangles are in
+
+        extern const int _Collider2D_tri_start[];   first triangle of each collider
+        extern const int _Collider2D_tri_count[];   how many (0 for other kinds)
+        extern const float _Collider2D_tri_xy[];    x0 y0 x1 y1 x2 y2 per triangle
+
+    Box2D's polygons are convex and of at most 8 vertices, so a collider is several shapes, and a
+    pair of colliders touches through several shape pairs: the touching and overlapping pairs are
+    counted, and a pair ends when its last shape pair does.
+    """
+    glue = _with_pair_refs( glue )
+    edits = [
+        ( "extern const int _Collider2D_bounce_combine[];\n",
+          "extern const int _Collider2D_bounce_combine[];\n"
+          "extern const int _Collider2D_tri_start[];\n"
+          "extern const int _Collider2D_tri_count[];\n"
+          "extern const float _Collider2D_tri_xy[];\n" ),
+        ( "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n",
+          POLYGON_SHAPES.replace( "{KEEP_SHAPE}", POLYGON_KEEP_SHAPE if contacts else "" )
+          + "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n" ),
+        ( "\tb2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };\n\t/* CapsuleCollider2D",
+          "\tif ( _Collider2D_kind[ci] == 4 )\n\t{\n"
+          "\t\tb2u_add_polygon( bodyId, &def, ci, offset );\n\t\treturn;\n\t}\n"
+          "\tb2Rot rotation = { _Collider2D_cos[ci], _Collider2D_sin[ci] };\n\t/* CapsuleCollider2D" ),
+    ]
+    for old, new in edits:
+        if glue.count( old ) != 1:
+            raise ValueError( "box2d_unity: polygon anchor not found: %r" % old[:60] )
+        glue = glue.replace( old, new )
+    return glue
+
+
+TERRAIN_KIND = 5
+
+TERRAIN_SHAPES = """
+/* Terrain chunks (collider kind 5): one static body each, whose box shapes the game replaces
+ * with b2u_terrain_set whenever the terrain changes. Boxes that did not change keep their shape
+ * (and so their touching pairs); only the ones that did are destroyed and created. */
+#define B2U_TERRAIN_CHUNKS {CHUNKS}
+#define B2U_TERRAIN_SHAPES {SHAPES}
+static int b2u_terrain_slot[B2U_MAX_COL]; /* slot + 1; 0 for a collider that is not a terrain chunk */
+static int b2u_terrain_used;
+static int b2u_terrain_count[B2U_TERRAIN_CHUNKS];
+static float b2u_terrain_box[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_SHAPES][4];
+static b2ShapeId b2u_terrain_shape[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_SHAPES];
+
+static void b2u_terrain_claim( int ci )
+{
+\tif ( b2u_terrain_used < B2U_TERRAIN_CHUNKS )
+\t{
+\t\tb2u_terrain_used += 1;
+\t\tb2u_terrain_slot[ci] = b2u_terrain_used;
+\t}
+}
+
+"""
+
+TERRAIN_SET = """
+/* Replace the shapes of terrain chunk ci with n boxes of 4 floats: center x, center y, half
+ * width, half height, relative to the chunk's position. More than B2U_TERRAIN_SHAPES are cut. */
+void b2u_terrain_set( int ci, const float* boxes, int n )
+{
+\tb2u_ensure();
+\tif ( ci < 0 || ci >= _Collider2D_count || ci >= B2U_MAX_COL || b2u_terrain_slot[ci] == 0 || b2u_col_has_body[ci] == 0 )
+\t{
+\t\treturn;
+\t}
+\tif ( n > B2U_TERRAIN_SHAPES )
+\t{
+\t\tn = B2U_TERRAIN_SHAPES;
+\t}
+\tint s = b2u_terrain_slot[ci] - 1;
+\tint old = b2u_terrain_count[s];
+\tb2BodyId bodyId = b2u_col_body[ci];
+
+\tstatic unsigned char kept[B2U_TERRAIN_SHAPES];
+\tstatic float nbox[B2U_TERRAIN_SHAPES][4];
+\tstatic b2ShapeId nshape[B2U_TERRAIN_SHAPES];
+\tfor ( int j = 0; j < old; ++j )
+\t{
+\t\tkept[j] = 0;
+\t}
+
+\tb2ShapeDef def = b2DefaultShapeDef();
+\tdef.userData = (void*)(intptr_t)( ci + 1 );
+\tdef.material.friction = _Collider2D_friction[ci];
+\tdef.material.restitution = _Collider2D_bounciness[ci];
+\tdef.material.userMaterialId =
+\t\t(uint64_t)( _Collider2D_friction_combine[ci] & 0xff ) | ( (uint64_t)( _Collider2D_bounce_combine[ci] & 0xff ) << 8 );
+\tdef.isSensor = _Collider2D_is_trigger[ci] != 0;
+\tdef.enableContactEvents = _Collider2D_is_trigger[ci] == 0;
+
+\tfor ( int i = 0; i < n; ++i )
+\t{
+\t\tconst float* b = boxes + 4 * i;
+\t\tint match = -1;
+\t\t/* the same slot first: the boxes before a change keep their places */
+\t\tfor ( int k = -1; k < old && match < 0; ++k )
+\t\t{
+\t\t\tint j = k < 0 ? i : k;
+\t\t\tif ( j >= old || kept[j] )
+\t\t\t{
+\t\t\t\tcontinue;
+\t\t\t}
+\t\t\tconst float* o = b2u_terrain_box[s][j];
+\t\t\tif ( o[0] == b[0] && o[1] == b[1] && o[2] == b[2] && o[3] == b[3] )
+\t\t\t{
+\t\t\t\tmatch = j;
+\t\t\t}
+\t\t}
+\t\tif ( match >= 0 )
+\t\t{
+\t\t\tkept[match] = 1;
+\t\t\tnshape[i] = b2u_terrain_shape[s][match];
+\t\t}
+\t\telse
+\t\t{
+\t\t\tb2Polygon box = b2MakeOffsetBox( b[2], b[3], (b2Vec2){ b[0], b[1] }, b2Rot_identity );
+\t\t\tnshape[i] = b2CreatePolygonShape( bodyId, &def, &box );
+\t\t}
+\t\tnbox[i][0] = b[0];
+\t\tnbox[i][1] = b[1];
+\t\tnbox[i][2] = b[2];
+\t\tnbox[i][3] = b[3];
+\t}
+\tfor ( int j = 0; j < old; ++j )
+\t{
+\t\tif ( kept[j] == 0 )
+\t\t{
+\t\t\tb2DestroyShape( b2u_terrain_shape[s][j], false );
+\t\t}
+\t}
+\tfor ( int i = 0; i < n; ++i )
+\t{
+\t\tb2u_terrain_shape[s][i] = nshape[i];
+\t\tb2u_terrain_box[s][i][0] = nbox[i][0];
+\t\tb2u_terrain_box[s][i][1] = nbox[i][1];
+\t\tb2u_terrain_box[s][i][2] = nbox[i][2];
+\t\tb2u_terrain_box[s][i][3] = nbox[i][3];
+\t}
+\tb2u_terrain_count[s] = n;
+}
+
+"""
+
+
+def _with_terrain( glue, chunks, max_shapes ):
+    """
+    Terrain chunks (plan["physics2d_terrain"]): collider kind 5, a static body at the collider's
+    center without a shape of its own. The game replaces its shapes with
+
+        void b2u_terrain_set( int ci, const float* boxes, int n );
+
+    n boxes of (center x, center y, half width, half height) relative to the body, at most
+    plan["terrain2d_max_shapes"] (default 256) of them. A box that is unchanged since the last call
+    keeps its shape, so a body resting on it does not see its contact end and begin again. The
+    body turns with its collider row's cos / sin (the GameObject's rotation when packed, fixed from then on), and a terrain collider has no Rigidbody2D.
+    """
+    edits = [
+        ( "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n",
+          TERRAIN_SHAPES.replace( "{CHUNKS}", str( chunks ) ).replace( "{SHAPES}", str( max_shapes ) )
+          + "static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )\n" ),
+        ( "\t\tb2u_add_shape( bodyId, ci, b2Vec2_zero );\n\t\tb2u_col_body[ci] = bodyId;\n",
+          "\t\tif ( _Collider2D_kind[ci] == %d )\n\t\t\tb2u_terrain_claim( ci );\n\t\telse\n"
+          "\t\t\tb2u_add_shape( bodyId, ci, b2Vec2_zero );\n\t\tb2u_col_body[ci] = bodyId;\n" % TERRAIN_KIND ),
+        ( "\t\tdef.position = (b2Pos){ x, y };\n\t\tb2BodyId bodyId = b2CreateBody( b2u_world, &def );\n\t\tif ( _Collider2D_kind[ci]",
+          "\t\tdef.position = (b2Pos){ x, y };\n"
+          "\t\tif ( _Collider2D_kind[ci] == %d )\n\t\t\tdef.rotation = (b2Rot){ _Collider2D_cos[ci], _Collider2D_sin[ci] };\n"
+          "\t\tb2BodyId bodyId = b2CreateBody( b2u_world, &def );\n\t\tif ( _Collider2D_kind[ci]" % TERRAIN_KIND ),
+        ( "void engine_box2d_step( void )\n{\n", TERRAIN_SET + "void engine_box2d_step( void )\n{\n" ),
+    ]
+    for old, new in edits:
+        if glue.count( old ) != 1:
+            raise ValueError( "box2d_unity: terrain anchor not found: %r" % old[:60] )
+        glue = glue.replace( old, new )
+    return glue
+
+
+TERRAIN_CHAIN_STORE = """
+/* Terrain chains: a chunk's boundary traced from its pixels, ground on the left of each chain.
+ * A chain that is the same as in the previous call keeps its shapes. */
+#define B2U_TERRAIN_CHAINS {CHAINS}
+#define B2U_TERRAIN_POINTS {POINTS}
+static int b2u_chain_count[B2U_TERRAIN_CHUNKS];
+static int b2u_chain_first[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_CHAINS]; /* into b2u_chain_pt */
+static int b2u_chain_len[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_CHAINS];
+static int b2u_chain_loop[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_CHAINS];
+static float b2u_chain_pt[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_POINTS][2];
+static b2ChainId b2u_chain_id[B2U_TERRAIN_CHUNKS][B2U_TERRAIN_CHAINS];
+
+static void b2u_terrain_clear_chains( int s )
+{
+\tfor ( int k = 0; k < b2u_chain_count[s]; ++k )
+\t{
+\t\tb2DestroyChain( b2u_chain_id[s][k] );
+\t}
+\tb2u_chain_count[s] = 0;
+}
+
+"""
+
+TERRAIN_CHAINS_SET = """
+/* Replace the shapes of terrain chunk ci with chains. pts holds x, y pairs relative to the chunk,
+ * chain k is counts[k] points from point starts[k], closed when loops[k] != 0. The ground is on
+ * the left of the way, and the chain collides on its right (the air). An open chain's ghost points
+ * continue its two end segments. At most B2U_TERRAIN_CHAINS chains and B2U_TERRAIN_POINTS points in
+ * all are taken, the rest are cut. */
+void b2u_terrain_set_chains( int ci, const float* pts, const int* starts, const int* counts, const int* loops, int n )
+{
+\tb2u_ensure();
+\tif ( ci < 0 || ci >= _Collider2D_count || ci >= B2U_MAX_COL || b2u_terrain_slot[ci] == 0 || b2u_col_has_body[ci] == 0 )
+\t{
+\t\treturn;
+\t}
+\tint s = b2u_terrain_slot[ci] - 1;
+\t/* no boxes while there are chains */
+\tfor ( int j = 0; j < b2u_terrain_count[s]; ++j )
+\t{
+\t\tb2DestroyShape( b2u_terrain_shape[s][j], false );
+\t}
+\tb2u_terrain_count[s] = 0;
+\tif ( n > B2U_TERRAIN_CHAINS )
+\t{
+\t\tn = B2U_TERRAIN_CHAINS;
+\t}
+\tint old = b2u_chain_count[s];
+
+\tstatic unsigned char kept[B2U_TERRAIN_CHAINS];
+\tstatic b2ChainId nid[B2U_TERRAIN_CHAINS];
+\tstatic int nfirst[B2U_TERRAIN_CHAINS];
+\tstatic int nlen[B2U_TERRAIN_CHAINS];
+\tstatic int nloop[B2U_TERRAIN_CHAINS];
+\tstatic float npt[B2U_TERRAIN_POINTS][2];
+\tfor ( int j = 0; j < old; ++j )
+\t{
+\t\tkept[j] = 0;
+\t}
+
+\tb2BodyId bodyId = b2u_col_body[ci];
+\tb2SurfaceMaterial material = b2DefaultSurfaceMaterial();
+\tmaterial.friction = _Collider2D_friction[ci];
+\tmaterial.restitution = _Collider2D_bounciness[ci];
+\tmaterial.userMaterialId =
+\t\t(uint64_t)( _Collider2D_friction_combine[ci] & 0xff ) | ( (uint64_t)( _Collider2D_bounce_combine[ci] & 0xff ) << 8 );
+
+\tint used = 0, made = 0;
+\tfor ( int k = 0; k < n; ++k )
+\t{
+\t\tint len = counts[k], loop = loops[k] != 0;
+\t\tif ( len < ( loop ? 3 : 2 ) || used + len > B2U_TERRAIN_POINTS )
+\t\t{
+\t\t\tcontinue;
+\t\t}
+\t\tconst float* p = pts + 2 * starts[k];
+\t\tfor ( int i = 0; i < len; ++i )
+\t\t{
+\t\t\tnpt[used + i][0] = p[2 * i];
+\t\t\tnpt[used + i][1] = p[2 * i + 1];
+\t\t}
+\t\tint match = -1;
+\t\tfor ( int j = 0; j < old && match < 0; ++j )
+\t\t{
+\t\t\tif ( kept[j] || b2u_chain_len[s][j] != len || b2u_chain_loop[s][j] != loop )
+\t\t\t{
+\t\t\t\tcontinue;
+\t\t\t}
+\t\t\tint same = 1;
+\t\t\tfor ( int i = 0; i < len && same; ++i )
+\t\t\t{
+\t\t\t\tsame = b2u_chain_pt[s][b2u_chain_first[s][j] + i][0] == p[2 * i] &&
+\t\t\t\t\t   b2u_chain_pt[s][b2u_chain_first[s][j] + i][1] == p[2 * i + 1];
+\t\t\t}
+\t\t\tif ( same )
+\t\t\t{
+\t\t\t\tmatch = j;
+\t\t\t}
+\t\t}
+\t\tif ( match >= 0 )
+\t\t{
+\t\t\tkept[match] = 1;
+\t\t\tnid[made] = b2u_chain_id[s][match];
+\t\t}
+\t\telse
+\t\t{
+\t\t\tstatic b2Vec2 points[B2U_TERRAIN_POINTS];
+\t\t\tfor ( int i = 0; i < len; ++i )
+\t\t\t{
+\t\t\t\tpoints[i] = (b2Vec2){ p[2 * i], p[2 * i + 1] };
+\t\t\t}
+\t\t\tb2ChainDef def = b2DefaultChainDef();
+\t\t\tdef.userData = (void*)(intptr_t)( ci + 1 );
+\t\t\tdef.points = points;
+\t\t\tdef.pointCount = len;
+\t\t\tdef.materials = &material;
+\t\t\tdef.materialCount = 1;
+\t\t\tdef.isLoop = loop;
+\t\t\tif ( loop == 0 )
+\t\t\t{
+\t\t\t\tdef.ghost1 = b2Sub( points[0], b2Sub( points[1], points[0] ) );
+\t\t\t\tdef.ghost2 = b2Add( points[len - 1], b2Sub( points[len - 1], points[len - 2] ) );
+\t\t\t}
+\t\t\tnid[made] = b2CreateChain( bodyId, &def );
+\t\t}
+\t\tnfirst[made] = used;
+\t\tnlen[made] = len;
+\t\tnloop[made] = loop;
+\t\tused += len;
+\t\tmade += 1;
+\t}
+\tfor ( int j = 0; j < old; ++j )
+\t{
+\t\tif ( kept[j] == 0 )
+\t\t{
+\t\t\tb2DestroyChain( b2u_chain_id[s][j] );
+\t\t}
+\t}
+\tfor ( int k = 0; k < made; ++k )
+\t{
+\t\tb2u_chain_id[s][k] = nid[k];
+\t\tb2u_chain_first[s][k] = nfirst[k];
+\t\tb2u_chain_len[s][k] = nlen[k];
+\t\tb2u_chain_loop[s][k] = nloop[k];
+\t}
+\tfor ( int i = 0; i < used; ++i )
+\t{
+\t\tb2u_chain_pt[s][i][0] = npt[i][0];
+\t\tb2u_chain_pt[s][i][1] = npt[i][1];
+\t}
+\tb2u_chain_count[s] = made;
+}
+
+"""
+
+
+def _with_terrain_chains( glue, max_chains, max_points ):
+    """
+    Terrain chains (plan["terrain2d_chains"], on top of _with_terrain): a chunk's ground boundary as
+    Box2D chains, which a solid region makes one of however large it is, and which are smooth for
+    things rolling over them:
+
+        void b2u_terrain_set_chains( int ci, const float* pts, const int* starts,
+                                     const int* counts, const int* loops, int n );
+
+    A chunk holds boxes or chains, whichever was set last. A chain unchanged since the last call keeps
+    its shapes (a body resting on it keeps its contact); the others are destroyed and made. The edges
+    must be longer than Box2D's linear slop (0.005 m), so pixels per unit must stay under 200.
+    """
+    edits = [
+        ( "/* Replace the shapes of terrain chunk ci with n boxes",
+          TERRAIN_CHAIN_STORE.replace( "{CHAINS}", str( max_chains ) ).replace( "{POINTS}", str( max_points ) )
+          + "/* Replace the shapes of terrain chunk ci with n boxes" ),
+        ( "\tint s = b2u_terrain_slot[ci] - 1;\n\tint old = b2u_terrain_count[s];\n",
+          "\tint s = b2u_terrain_slot[ci] - 1;\n\tb2u_terrain_clear_chains( s );\n\tint old = b2u_terrain_count[s];\n" ),
+        ( "void engine_box2d_step( void )\n{\n", TERRAIN_CHAINS_SET + "void engine_box2d_step( void )\n{\n" ),
+    ]
+    for old, new in edits:
+        if glue.count( old ) != 1:
+            raise ValueError( "box2d_unity: terrain chain anchor not found: %r" % old[:60] )
         glue = glue.replace( old, new )
     return glue
 

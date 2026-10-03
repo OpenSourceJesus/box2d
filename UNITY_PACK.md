@@ -677,3 +677,39 @@ Fixture: `examples/unity_pack/SystemsScene`.
 
 
 https://github.com/brentharts/crust
+
+**Terrain chunks.** A collider whose shapes change at run time -- destructible terrain, one chunk
+a collider -- is kind 5 (`plan["physics2d_terrain"]`, one `collider2d` row of kind 5 per chunk, no
+Rigidbody2D). Box2D-Packed makes it a static body at the collider's center with no shape of its own;
+the game replaces its shapes with
+
+```c
+void b2u_terrain_set( int ci, const float* boxes, int n );
+```
+
+`n` boxes of four floats -- center x, center y, half width, half height -- relative to the body, as
+`b2MakeOffsetBox` takes them, at most `plan["terrain2d_max_shapes"]` (default 256, a table sized
+once; the rest are cut). A box that is the same as in the previous call keeps its shape, so a body
+resting on untouched terrain does not see its contact end and begin again when a chunk rebuilds;
+only the boxes that changed are destroyed and created. Collision messages name the chunk's
+collider, a chunk touching a body through several boxes is one pair (the pair counting a
+PolygonCollider2D uses), and the body turns with its row's cos / sin (fixed at pack time). `test/terrain/run.sh` builds and runs
+the glue against a chunk and a falling circle.
+
+**Terrain chains.** A chunk may hold chains instead of boxes (`plan["terrain2d_chains"]`, with
+`terrain2d_max_chains`, default 64, and `terrain2d_max_points`, default 1024, per chunk; tables sized once):
+
+```c
+void b2u_terrain_set_chains( int ci, const float* pts, const int* starts,
+                             const int* counts, const int* loops, int n );
+```
+
+`pts` holds x, y pairs relative to the body; chain `k` is `counts[k]` points from point `starts[k]`, closed
+when `loops[k]` is not 0. The ground is on the **left** of the way and the chain collides on its right (the
+air), so an outer boundary runs counterclockwise and a hole clockwise. An open chain's ghost points continue
+its two end segments. A solid region is one chain however large it is, and a body rolling over a chain does
+not catch on seams as it does between boxes. A chunk holds boxes or chains, whichever was set last; a chain
+that is the same as in the previous call keeps its shapes, the others are destroyed and made. Collision
+messages work as for boxes: Box2D takes contact events from either shape of a pair, and the other body's
+shapes have them on. Box2D refuses an edge shorter than its linear slop (0.005 m), so pixels per unit must
+stay under 200. A chunk's rotation applies as for boxes. `test/terrain/run.sh` runs both.
