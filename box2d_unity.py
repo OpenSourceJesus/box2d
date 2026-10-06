@@ -1691,6 +1691,8 @@ COLLIDER_EXTERNS = """extern const int _Collider2D_count;
 extern const int _Collider2D_kind[];
 extern const int _Collider2D_is_trigger[];
 extern const int _Collider2D_rb2d[];
+extern const int _Collider2D_owner_class[];
+extern const int _Collider2D_owner_inst[];
 extern const float _Collider2D_ox[];
 extern const float _Collider2D_oy[];
 extern const float _Collider2D_hw[];
@@ -1837,6 +1839,8 @@ extern float _Rigidbody2D_gravity_scale[];
 extern float _Rigidbody2D_linear_damping[];
 extern float _Rigidbody2D_mass[];
 extern int _Rigidbody2D_body_type[];
+extern int _Rigidbody2D_owner_class[];
+extern int _Rigidbody2D_owner_inst[];
 {COLLIDER_DECLS}
 /* unity_pack exports (engine.c) */
 void engine_rb2d_get_pos( int rb, float* x, float* y );
@@ -1987,7 +1991,17 @@ static void b2u_create_body( int rb )
 		/* Offset relative to the body origin, rotated like the collider */
 		float c = _Collider2D_cos[ci], s = _Collider2D_sin[ci];
 		float ox = _Collider2D_ox[ci], oy = _Collider2D_oy[ci];
-		b2u_add_shape( bodyId, ci, (b2Vec2){{ c * ox - s * oy, s * ox + c * oy }} );
+		b2Vec2 off = {{ c * ox - s * oy, s * ox + c * oy }};
+		/* A child GameObject's collider without its own Rigidbody2D sits on the
+		 * ancestor's body, away from the body origin (Unity) */
+		if ( _Collider2D_owner_class[ci] != _Rigidbody2D_owner_class[rb] ||
+			 _Collider2D_owner_inst[ci] != _Rigidbody2D_owner_inst[rb] )
+		{{
+			float cx, cy;
+			engine_col2d_center( ci, &cx, &cy );
+			off = b2InvRotateVector( def.rotation, (b2Vec2){{ cx - x, cy - y }} );
+		}}
+		b2u_add_shape( bodyId, ci, off );
 	}}
 
 	/* Rigidbody2D.mass: scale the shape-derived mass data to the authored mass */
