@@ -1757,6 +1757,10 @@ LIVE_STATE = """
 /* Which bodies are in the simulation (engine_rb2d_live / engine_col2d_live) */
 static int b2u_rb_on[B2U_MAX_RB];
 static int b2u_col_on[B2U_MAX_COL];
+/* A Rigidbody2D's collider on an inactive GameObject: filtered out of contacts
+ * and queries (destroying the shape would recompute the authored mass) */
+static int b2u_col_gone[B2U_MAX_COL];
+static b2Filter b2u_col_filter[B2U_MAX_COL];
 
 /* A disabled body's contacts are gone: forget its touching pairs */
 static void b2u_drop_pairs( int rb, int ci )
@@ -1814,6 +1818,34 @@ LIVE_SYNC = """\t/* Bodies of GameObjects that left or rejoined the simulation *
 \t\t{
 \t\t\tb2Body_Disable( b2u_col_body[ci] );
 \t\t\tb2u_drop_pairs( -1, ci );
+\t\t}
+\t}
+\tfor ( int rb = 0; rb < b2u_rb_created; ++rb )
+\t{
+\t\t/* ponytail: the first 32 shapes of a body; raise the cap for bigger compounds */
+\t\tb2ShapeId shapes[32];
+\t\tint n = b2Body_GetShapes( b2u_rb_body[rb], shapes, 32 );
+\t\tfor ( int k = 0; k < n; ++k )
+\t\t{
+\t\t\tint ci = (int)(intptr_t)b2Shape_GetUserData( shapes[k] ) - 1;
+\t\t\tif ( ci < 0 || ci >= _Collider2D_count || ci >= B2U_MAX_COL )
+\t\t\t\tcontinue;
+\t\t\tint gone = engine_col2d_live( ci ) == 0;
+\t\t\tif ( gone == b2u_col_gone[ci] )
+\t\t\t\tcontinue;
+\t\t\tb2u_col_gone[ci] = gone;
+\t\t\tif ( gone )
+\t\t\t{
+\t\t\t\tb2Filter f = b2u_col_filter[ci] = b2Shape_GetFilter( shapes[k] );
+\t\t\t\tf.categoryBits = 0;
+\t\t\t\tf.maskBits = 0;
+\t\t\t\tb2Shape_SetFilter( shapes[k], f );
+\t\t\t\tb2u_drop_pairs( -1, ci );
+\t\t\t}
+\t\t\telse
+\t\t\t{
+\t\t\t\tb2Shape_SetFilter( shapes[k], b2u_col_filter[ci] );
+\t\t\t}
 \t\t}
 \t}
 """
