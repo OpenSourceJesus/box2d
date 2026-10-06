@@ -1994,7 +1994,7 @@ static void b2u_add_shape( b2BodyId bodyId, int ci, b2Vec2 offset )
 	}}
 	else
 	{{
-		b2Polygon box = b2MakeOffsetBox( _Collider2D_hw[ci], _Collider2D_hh[ci], offset, rotation );
+		b2Polygon box = b2MakeOffsetRoundedBox( _Collider2D_hw[ci], _Collider2D_hh[ci], offset, rotation, {POLY_RADIUS} );
 		b2CreatePolygonShape( bodyId, &def, &box );
 	}}
 }}
@@ -2347,6 +2347,10 @@ def _mode_parts( mode, length_units_per_meter ):
             "DEFAULT_DT": "0.02f",
             "SHAPE_EXTRA": "",
             "SENSOR_EVENTS": "",
+            # Unity's polygon skin (Physics2D.defaultContactOffset): boxes rest
+            # that far apart, so bounds-edge linecasts miss the floor.
+            # ponytail: the default 0.01, not Physics2DSettings' m_DefaultContactOffset
+            "POLY_RADIUS": "0.01f",
         }
     return {
         "PACKER": "godot_pack",
@@ -2362,4 +2366,5 @@ def _mode_parts( mode, length_units_per_meter ):
             "\t/* Godot: areas see every body and area; both shapes take sensor events */\n"
             "\tdef.enableSensorEvents = true;\n" ),
         "SENSOR_EVENTS": GODOT_SENSOR_EVENTS,
+        "POLY_RADIUS": "0.0f",
     }
