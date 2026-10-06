@@ -59,8 +59,12 @@ typedef struct b2Shape
 	};
 } b2Shape;
 
+// The cache-line layout above is laid out for 8-byte pointers. A 32-bit target (wasm32) has smaller pointers, so the struct is smaller and the
+// geometry no longer starts on a cache line: still correct, only less tuned.
+#if UINTPTR_MAX > 0xffffffffu
 _Static_assert( sizeof( b2Shape ) == 264, "b2Shape size, must not be a power of two, see above" );
 _Static_assert( offsetof( b2Shape, aabb ) == 64, "aabb should start cache line 1" );
+#endif
 _Static_assert( offsetof( b2Shape, userData ) + sizeof( void* ) <= 64, "pair filter fields must fit in cache line 0" );
 
 typedef struct b2ChainShape
